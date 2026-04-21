@@ -289,6 +289,21 @@ class TranscriptionCoordinator:
             )
             if workers > 1:
                 return self._transcribe_chunks_in_pool(job, chunks, detected_language, device, workers)
+        elif device == "cuda":
+            logger.info(
+                "Job %s detected a CUDA-capable GPU and will use GPU acceleration automatically.",
+                job.job_id,
+            )
+            logger.info(
+                "Job %s is keeping chunk transcription serial on GPU for stability with official Whisper.",
+                job.job_id,
+            )
+            job.add_progress(
+                "gpu_acceleration",
+                "CUDA-compatible GPU detected. Using GPU automatically for transcription.",
+                50,
+            )
+            job_store.update_job(job)
 
         logger.info(
             "Job %s using serial transcription on %s for %s chunk(s).",
