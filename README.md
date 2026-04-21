@@ -40,9 +40,7 @@ on-prem STT/
 |-- requirements.txt
 |-- README.md
 |-- bootstrap_windows.bat
-|-- start_all.bat
-|-- run_backend.bat
-`-- run_frontend.bat
+`-- start_all.bat
 ```
 
 ## Quick Start For A New User
@@ -62,17 +60,21 @@ This app will not transcribe audio unless `ffmpeg` and `ffprobe` are installed.
 
 They are not included in `requirements.txt`, because they are external Windows tools, not Python packages.
 
-Follow these steps:s
-
 fixer.py uses pydub to read and normalize the original audio files before converting them into 16kHz mono PCM WAV. Because of that FFmpeg must be available in the runtime environment, especially when the source files are not already WAV.
-This means replication depends not only on GCP setup, but also on having:
-the Python dependencies from requirements.txt
-FFmpeg is installed and available in the system path
-Download a Windows FFmpeg build such as ffmpeg-master-latest-win64-gpl-shared from the BtbN FFmpeg Builds release page, extract it, and add the FFmpeg bin folder to the system PATH.
-Download: ffmpeg-master-latest-win64-gpl-shared from this repo: https://github.com/BtbN/FFmpeg-Builds/releases 
+
+Follow these steps:
+
+1. Open the BtbN FFmpeg Builds release page. 
+    https://github.com/BtbN/FFmpeg-Builds/releases  
+2. Download the Windows build named `ffmpeg-master-latest-win64-gpl-shared`. (last one in the repo)
+3. Extract the downloaded archive to a folder on your machine, for example `C:\ffmpeg`.
+4. Open the extracted folder and locate its `bin` folder. This is the folder that contains both `ffmpeg.exe` and `ffprobe.exe`.
+5. Ensure `bin` folder is in the master folder and you are set. 
 
 
-### Step 3: Check That `ffmpeg` Was Installed Correctly
+`ffprobe` is included in the same FFmpeg download. 
+
+### Step 3: Check That `ffmpeg` and `ffprobe` Were Installed Correctly
 
 In PowerShell, run:
 
@@ -83,45 +85,7 @@ ffprobe -version
 
 If both commands show version information, then setup is correct.
 
-If you get a message saying the command was not found, then `ffmpeg` was not added to `PATH` correctly yet.
-
-### Step 4: Start The App
-
-Open PowerShell in the project folder and run:
-
-```powershell
-.\start_all.bat
-```
-
-This one command will:
-
-- create the Python virtual environment if needed
-- install the Python packages
-- start the backend
-- start the frontend
-
-After startup:
-
-- Backend: `http://127.0.0.1:8000`
-- Frontend: `http://127.0.0.1:8501`
-
-### Step 5: Open The App
-
-Open this in your browser:
-
-```text
-http://127.0.0.1:8501
-```
-
-## One-Command Setup And Launch
-
-For normal use on Windows, run:
-
-```powershell
-.\start_all.bat
-```
-
-This is the main command most users should use.
+If you get a message saying either command was not found, then the FFmpeg `bin` folder was not added to `PATH` correctly yet.
 
 ## Install Python Dependencies
 
@@ -134,40 +98,41 @@ python -m pip install --upgrade pip "setuptools<81.0.0" wheel
 python -m pip install --no-build-isolation -r requirements.txt
 ```
 
-### Build Tooling
 
-- `setuptools` and `wheel` are required build tools for packages that are installed from source during dependency installation.
-- The setup step upgrades these tools before installing the project requirements.
-- `setuptools` is intentionally kept below version `81` because `openai-whisper` still expects `pkg_resources` during installation.
-- The install command uses `--no-build-isolation` so `openai-whisper` installs against the local virtual environment build toolchain.
+### Step 4: Start The App
 
-## Install `ffmpeg` Later If Needed
-
-If the app says `ffmpeg` or `ffprobe` was not found, go back to the setup section above and complete the `ffmpeg` installation steps.
-
-## Running the Backend
+1. Open PowerShell. ( CTRL SHIFT `)
+2. Go to the project folder.
+3. Run this command:
 
 ```powershell
-.\run_backend.bat
+.\start_all.bat
 ```
 
-Manual command:
+This command will automatically:
 
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+- create the Python virtual environment if needed
+- install the Python packages
+- start the backend
+- start the frontend
+
+Wait until the windows finish loading.
+
+After startup:
+
+- Backend: `http://127.0.0.1:8000`
+- Frontend: `http://127.0.0.1:8501`
+
+### Step 5: Open The App
+
+1. Open your web browser.
+2. Paste this address into the address bar:
+
+```text
+http://127.0.0.1:8501
 ```
 
-## Running the Frontend
 
-```powershell
-.\run_frontend.bat
-```
-
-Manual command:
-
-```powershell
-.\.venv\Scripts\python.exe -m streamlit run frontend/streamlit_app.py
-```
 
 ## How Local Model Download and Reuse Works
 
