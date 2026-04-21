@@ -19,11 +19,16 @@ from app.services.job_store import job_store
 from app.services.merge_service import merge_service
 from app.services.model_service import model_service
 from app.services.output_service import output_service
+from app.services.llm_summarizer import llm_summarizer
 from app.services.transliteration_service import transliteration_service
 
 logger = logging.getLogger(__name__)
 
 _WORKER_MODEL_CACHE: dict[tuple[str, str], whisper.Whisper] = {}
+
+
+class JobCancelledError(RuntimeError):
+    pass
 
 
 def _load_worker_model(model_name: str, device: str) -> whisper.Whisper:
@@ -94,6 +99,40 @@ class TranscriptionCoordinator:
         thread.start()
         return job
 
+    def start_summary_job(self, job_id: str) -> None:
+        job = job_store.get_job(job_id)
+        if not job:
+            return
+
+        job.summary_status = "running"
+        job.summary_error = None
+        job.summary_cancel_requested = False
+        job.add_progress("summarization_requested", "Summary requested. Preparing local summarizer.", 88)
+        job_store.update_job(job)
+
+        thread = threading.Thread(target=self._run_summary_job, args=(job_id,), daemon=True)
+        thread.start()
+
+    def cancel_job(self, job_id: str) -> JobRecord | None:
+        job = job_store.get_job(job_id)
+        if not job:
+            return None
+
+        job.cancel_requested = True
+        job.add_progress("cancelling", "Stopping transcription after the current step finishes.", 100)
+        job_store.update_job(job)
+        return job
+
+    def cancel_summary_job(self, job_id: str) -> JobRecord | None:
+        job = job_store.get_job(job_id)
+        if not job:
+            return None
+
+        job.summary_cancel_requested = True
+        job.add_progress("summary_cancelling", "Stopping summary after the current request finishes.", 100)
+        job_store.update_job(job)
+        return job
+
     def _detect_primary_language(self, model, normalized_path: Path, requested_language: str) -> str | None:
         if requested_language in {"ar", "en"}:
             logger.info("Using user-requested language override: %s", requested_language)
@@ -139,6 +178,7 @@ class TranscriptionCoordinator:
         try:
             job_started_at = time.perf_counter()
             job.status = "running"
+            job.cancel_requested = False
             job.add_progress("model_check", "Model check started.", 5)
             job_store.update_job(job)
             logger.info(
@@ -194,6 +234,7 @@ class TranscriptionCoordinator:
             job.add_progress("language_selected", language_message, 40)
             job_store.update_job(job)
             logger.info("Job %s language selection completed: %s.", job.job_id, job.language)
+            self._raise_if_job_cancelled(job)
 
             job.add_progress("chunking", "Chunking started.", 42)
             job_store.update_job(job)
@@ -207,6 +248,7 @@ class TranscriptionCoordinator:
             job.add_progress("chunking_done", f"Prepared {len(chunks)} audio chunk(s).", 50)
             job_store.update_job(job)
             logger.info("Job %s chunking completed with %s chunk(s).", job.job_id, len(chunks))
+            self._raise_if_job_cancelled(job)
 
             all_segments = self._transcribe_chunks(job, chunks, detected_language, device, model, duration)
             logger.info("Job %s transcription stage produced %s raw segment(s).", job.job_id, len(all_segments))
@@ -225,7 +267,7 @@ class TranscriptionCoordinator:
                 diarization_status,
             )
 
-            job.add_progress("outputs", "Generating downloadable files.", 92)
+            job.add_progress("outputs", "Generating downloadable files.", 94)
             job_store.update_job(job)
             logger.info("Job %s generating output files.", job.job_id)
 
@@ -250,6 +292,12 @@ class TranscriptionCoordinator:
                 time.perf_counter() - job_started_at,
             )
 
+        except JobCancelledError:
+            logger.info("Transcription job %s cancelled by user.", job_id)
+            job.status = "cancelled"
+            job.error = "Transcription stopped by user."
+            job.add_progress("cancelled", "Transcription stopped.", 100)
+            job_store.update_job(job)
         except (AudioProcessingError, ChunkingError, ValueError, RuntimeError) as exc:
             logger.exception("Transcription job %s failed", job_id)
             job.status = "failed"
@@ -262,6 +310,71 @@ class TranscriptionCoordinator:
             job.error = "An unexpected error occurred during transcription."
             job.add_progress("failed", f"Job failed: {exc}", 100)
             job_store.update_job(job)
+
+    def _run_summary_job(self, job_id: str) -> None:
+        job = job_store.get_job(job_id)
+        if not job:
+            return
+
+        try:
+            self._generate_summary(job, progress_percent=90)
+
+            if job.text_file or job.docx_file:
+                output_dir = settings.outputs_dir / job.job_id
+                text_path, docx_path, _metadata_path = output_service.write_outputs(job, output_dir)
+                job.text_file = text_path
+                job.docx_file = docx_path
+                logger.info("Job %s outputs refreshed after summarization.", job.job_id)
+
+            progress_message = (
+                "Summary completed successfully."
+                if job.summary_status == "completed"
+                else "Summary stopped."
+                if job.summary_status == "cancelled"
+                else "Summary unavailable."
+            )
+            job.add_progress("summarization_done", progress_message, 100)
+            job_store.update_job(job)
+        except JobCancelledError:
+            logger.info("Summary job %s cancelled by user.", job_id)
+            job.summary = None
+            job.summary_status = "cancelled"
+            job.summary_error = "Summary stopped by user."
+            job.add_progress("summarization_cancelled", "Summary stopped.", 100)
+            job_store.update_job(job)
+        except Exception as exc:
+            logger.exception("Summary job %s failed", job_id)
+            job.summary = "Summary unavailable"
+            job.summary_status = "failed"
+            job.summary_error = str(exc)
+            job.add_progress("summarization_failed", f"Summary failed: {exc}", 100)
+            job_store.update_job(job)
+
+    def _generate_summary(self, job: JobRecord, progress_percent: float) -> None:
+        job.summary_status = "running"
+        job.summary_error = None
+        job.summary_cancel_requested = False
+        job.add_progress("summarization", "Generating local summary with Ollama.", progress_percent)
+        job_store.update_job(job)
+        logger.info("Job %s generating local transcript summary with Ollama.", job.job_id)
+        self._raise_if_summary_cancelled(job)
+
+        primary_language = job.language if job.language in {"ar", "en"} else None
+        summary = llm_summarizer.summarize_with_llm(
+            job.transcript_text or "",
+            language=primary_language,
+        )
+        self._raise_if_summary_cancelled(job)
+
+        job.summary = summary
+        job.summary_status = "completed" if summary and summary != "Summary unavailable" else "failed"
+        job.summary_error = None if job.summary_status == "completed" else "Summary unavailable"
+        logger.info(
+            "Job %s summary generation completed (%s characters, status=%s).",
+            job.job_id,
+            len(job.summary or ""),
+            job.summary_status,
+        )
 
     def _transcribe_chunks(
         self,
@@ -327,10 +440,12 @@ class TranscriptionCoordinator:
         stage_started_at = time.perf_counter()
 
         for chunk in chunks:
+            self._raise_if_job_cancelled(job)
             final_error: Exception | None = None
 
             for attempt in range(1, settings.transcription_retries + 1):
                 try:
+                    self._raise_if_job_cancelled(job)
                     chunk_started_at = time.perf_counter()
                     logger.info(
                         "Job %s processing chunk %s/%s serially (attempt %s, audio %.2fs-%.2fs).",
@@ -378,6 +493,7 @@ class TranscriptionCoordinator:
                     final_error = None
                     break
                 except Exception as exc:
+                    self._raise_if_job_cancelled(job)
                     final_error = exc
                     logger.exception("Chunk %s failed on attempt %s", chunk.index, attempt)
                     time.sleep(min(attempt, 3))
@@ -424,6 +540,7 @@ class TranscriptionCoordinator:
 
         with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
             while pending_chunks:
+                self._raise_if_job_cancelled(job)
                 chunk_labels = ", ".join(str(chunk.index) for chunk in pending_chunks)
                 logger.info(
                     "Job %s dispatching %s chunk(s) to the process pool: [%s].",
@@ -444,6 +561,7 @@ class TranscriptionCoordinator:
                 pending_chunks = []
 
                 for future in concurrent.futures.as_completed(future_map):
+                    self._raise_if_job_cancelled(job)
                     chunk = future_map[future]
                     attempts_by_chunk[chunk.index] += 1
 
@@ -492,6 +610,8 @@ class TranscriptionCoordinator:
                         time.sleep(min(attempt, 3))
                         pending_chunks.append(chunk)
 
+        self._raise_if_job_cancelled(job)
+
         ordered_results = [chunk_results[index] for index in sorted(chunk_results)]
         logger.info(
             "Job %s transcription stage completed in parallel in %.2fs.",
@@ -499,6 +619,14 @@ class TranscriptionCoordinator:
             time.perf_counter() - stage_started_at,
         )
         return self._build_transcript_segments(ordered_results, detected_language)
+
+    def _raise_if_job_cancelled(self, job: JobRecord) -> None:
+        if job.cancel_requested:
+            raise JobCancelledError("Transcription stopped by user.")
+
+    def _raise_if_summary_cancelled(self, job: JobRecord) -> None:
+        if job.summary_cancel_requested:
+            raise JobCancelledError("Summary stopped by user.")
 
     def _build_transcript_segments(
         self,
