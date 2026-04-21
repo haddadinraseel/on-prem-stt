@@ -11,5 +11,4 @@ if not exist .venv (
 echo.
 echo Installation finished.
 echo If ffmpeg is installed and available in PATH, you can start the app with:
-echo   .\run_backend.bat
-echo   .\run_frontend.bat
+echo   .\start_all.bat
