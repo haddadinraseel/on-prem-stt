@@ -226,6 +226,40 @@ def inject_css() -> None:
                 padding: 0.95rem 1rem;
             }}
 
+            .summary-box {{
+                background: rgba(255,255,255,0.78);
+                border: 1px solid rgba(29,78,216,0.16);
+                border-radius: 18px;
+                padding: 1rem 1.05rem;
+                box-shadow: 0 10px 28px rgba(15,23,42,0.04);
+                min-height: 160px;
+            }}
+
+            .summary-title {{
+                font-size: 0.95rem;
+                font-weight: 700;
+                color: {PRIMARY};
+                margin-bottom: 0.45rem;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+            }}
+
+            .summary-text {{
+                color: {PRIMARY};
+                font-size: 0.98rem;
+                line-height: 1.7;
+                white-space: pre-wrap;
+            }}
+
+            .result-column-title {{
+                font-size: 0.95rem;
+                font-weight: 700;
+                color: {PRIMARY};
+                margin-bottom: 0.55rem;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+            }}
+
             .hint {{
                 color: {MUTED};
                 font-size: 0.93rem;
@@ -278,6 +312,8 @@ def init_state() -> None:
         "active_source_label": None,
         "last_uploaded_name": None,
         "upload_widget_version": 0,
+        "summary_requested": False,
+        "is_transcribing": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -291,6 +327,8 @@ def reset_transcription_state() -> None:
     st.session_state.active_source_label = None
     st.session_state.last_uploaded_name = None
     st.session_state.upload_widget_version += 1
+    st.session_state.summary_requested = False
+    st.session_state.is_transcribing = False
 
 
 def api_get(path: str) -> requests.Response:
@@ -334,6 +372,18 @@ def fetch_job(job_id: str) -> dict:
     return api_get(f"/api/transcriptions/{job_id}").json()
 
 
+def start_summary(job_id: str) -> dict:
+    return api_post(f"/api/transcriptions/{job_id}/summarize").json()
+
+
+def cancel_transcription(job_id: str) -> dict:
+    return api_post(f"/api/transcriptions/{job_id}/cancel").json()
+
+
+def cancel_summary(job_id: str) -> dict:
+    return api_post(f"/api/transcriptions/{job_id}/cancel-summary").json()
+
+
 def seconds_to_label(seconds: float) -> str:
     total = max(0.0, float(seconds))
     hours = int(total // 3600)
@@ -352,6 +402,22 @@ def render_segments(segments: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def render_summary(summary: str | None, summary_status: str) -> None:
+    if summary_status == "running":
+        summary_text = "Generating summary..."
+    else:
+        summary_text = (summary or "Summary unavailable").strip()
+    st.markdown(
+        f"""
+        <div class="summary-box">
+            <div class="summary-title">Summarization</div>
+            <div class="summary-text">{html.escape(summary_text)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_hero() -> None:
     st.markdown(
         """
@@ -359,7 +425,7 @@ def render_hero() -> None:
             <h1>On-Prem Speech to Text</h1>
             <p>
                 Upload audio or record directly in the browser, transcribe locally with Whisper,
-                follow live progress, and export timestamped transcripts in a cleaner workflow.
+                generate a local Ollama summary on the same machine, and export both results in one workflow.
             </p>
         </div>
         """,
@@ -399,6 +465,7 @@ def begin_transcription_from_upload(uploaded_file, model_name: str) -> None:
     st.session_state.job_result = None
     st.session_state.active_source_label = uploaded_file.name
     st.session_state.last_uploaded_name = uploaded_file.name
+    st.session_state.is_transcribing = True
 
 
 def begin_transcription_from_recording(model_name: str) -> None:
@@ -424,6 +491,7 @@ def begin_transcription_from_recording(model_name: str) -> None:
     st.session_state.job_result = None
     st.session_state.active_source_label = "Browser recording"
     st.session_state.recording_blob = None
+    st.session_state.is_transcribing = True
 
 
 def build_updates_html(progress_items: list[dict]) -> str:
@@ -521,13 +589,41 @@ def poll_until_finished(job_id: str, poll_seconds: int = 2) -> dict | None:
         with progress_placeholder.container():
             render_progress_panel(result)
 
-        if result["status"] in {"completed", "failed"}:
+        if result["status"] in {"completed", "failed", "cancelled"}:
             final_result = result
             break
 
         time.sleep(poll_seconds)
 
     return final_result
+
+
+def poll_until_summary_ready(job_id: str, poll_seconds: int = 2) -> dict | None:
+    status_placeholder = st.empty()
+
+    while True:
+        try:
+            result = fetch_job(job_id)
+        except requests.RequestException as exc:
+            status_placeholder.error(f"Failed to retrieve summary status: {exc}")
+            return None
+
+        st.session_state.job_result = result
+        summary_status = result.get("summary_status", "not_started")
+
+        with status_placeholder.container():
+            if summary_status == "running":
+                st.info("Working... summary is running now and will appear here when it is ready.")
+            elif summary_status == "cancelled":
+                st.warning(result.get("summary_error") or "Summary stopped.")
+            elif summary_status == "failed":
+                st.warning(result.get("summary_error") or "Summary unavailable.")
+
+        if summary_status != "running":
+            status_placeholder.empty()
+            return result
+
+        time.sleep(poll_seconds)
 
 
 inject_css()
@@ -606,8 +702,18 @@ if input_mode == "Upload audio file":
             unsafe_allow_html=True,
         )
 
-    if st.button("Transcribe audio", type="primary", use_container_width=True):
+    transcribe_label = "Transcribing..." if st.session_state.is_transcribing else "Transcribe audio"
+    if st.button(transcribe_label, type="primary", use_container_width=True, disabled=st.session_state.is_transcribing):
         begin_transcription_from_upload(uploaded, model_name)
+    if st.session_state.is_transcribing:
+        st.info("Working... transcription is running now.")
+        if st.button("Stop transcription", use_container_width=True, key="stop_transcription_upload"):
+            try:
+                cancel_transcription(st.session_state.job_id)
+            except requests.RequestException as exc:
+                st.error(f"Could not stop transcription: {exc}")
+            else:
+                st.rerun()
 else:
     st.markdown(
         """
@@ -640,13 +746,23 @@ else:
             unsafe_allow_html=True,
         )
 
+    record_button_label = "Transcribing..." if st.session_state.is_transcribing else "Transcribe recording"
     if st.button(
-        "Transcribe recording",
+        record_button_label,
         type="primary",
         use_container_width=True,
-        disabled=not has_recording,
+        disabled=(not has_recording) or st.session_state.is_transcribing,
     ):
         begin_transcription_from_recording(model_name)
+    if st.session_state.is_transcribing:
+        st.info("Working... transcription is running now.")
+        if st.button("Stop transcription", use_container_width=True, key="stop_transcription_recording"):
+            try:
+                cancel_transcription(st.session_state.job_id)
+            except requests.RequestException as exc:
+                st.error(f"Could not stop transcription: {exc}")
+            else:
+                st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -687,17 +803,24 @@ else:
     latest_result = poll_until_finished(job_id)
 
     if latest_result is not None and latest_result.get("status") == "completed":
+        st.session_state.is_transcribing = False
         transcript = render_segments(latest_result.get("segments", []))
+        summary_text = latest_result.get("summary")
+        summary_status = latest_result.get("summary_status", "not_started")
 
-        st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="result-column-title">Transcript</div>',
+            unsafe_allow_html=True,
+        )
         st.text_area(
             "Transcript with timestamps",
             transcript,
-            height=360,
+            height=420,
         )
 
         txt_url = latest_result.get("text_download_url")
         docx_url = latest_result.get("docx_download_url")
+        summary_download = (summary_text or "Summary unavailable").strip().encode("utf-8")
 
         if txt_url and docx_url:
             try:
@@ -706,30 +829,79 @@ else:
             except requests.RequestException as exc:
                 st.error(f"Could not download output files: {exc}")
             else:
-                col1, col2 = st.columns(2)
-                with col1:
+                transcript_download_col, transcript_docx_col = st.columns(2)
+                with transcript_download_col:
                     st.download_button(
-                        "Download TXT",
+                        "Download Transcript TXT",
                         data=txt_bytes,
                         file_name=f"{job_id}.txt",
                         mime="text/plain",
                         use_container_width=True,
                     )
-                with col2:
+                with transcript_docx_col:
                     st.download_button(
-                        "Download DOCX",
+                        "Download Transcript DOCX",
                         data=docx_bytes,
                         file_name=f"{job_id}.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         use_container_width=True,
                     )
 
-    elif latest_result is not None and latest_result.get("status") == "failed":
-        st.error(latest_result.get("error") or "The transcription job failed.")
+        st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
+        summarize_disabled = summary_status in {"running", "completed"}
+        summarize_label = "Summarizing..." if summary_status == "running" else "Summarize"
+        if st.button(summarize_label, use_container_width=True, disabled=summarize_disabled, key="summarize_completed"):
+            try:
+                start_summary(job_id)
+            except requests.RequestException as exc:
+                st.error(f"Could not start summarization: {exc}")
+            else:
+                st.session_state.summary_requested = True
+                st.rerun()
 
-st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
-if st.button("Transcribe a new file", use_container_width=True):
-    reset_transcription_state()
-    st.rerun()
+        if st.session_state.summary_requested and summary_status == "running":
+            refreshed_result = poll_until_summary_ready(job_id)
+            if refreshed_result is not None:
+                latest_result = refreshed_result
+                summary_text = latest_result.get("summary")
+                summary_status = latest_result.get("summary_status", "not_started")
+                if summary_status != "running":
+                    st.session_state.summary_requested = False
+
+        if summary_status in {"running", "completed", "failed", "cancelled"}:
+            st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
+            render_summary(summary_text, summary_status)
+            if summary_status == "cancelled":
+                st.warning(latest_result.get("summary_error") or "Summary stopped.")
+            if summary_status == "running":
+                if st.button("Stop summarizing", use_container_width=True, key="stop_summarizing"):
+                    try:
+                        cancel_summary(job_id)
+                    except requests.RequestException as exc:
+                        st.error(f"Could not stop summary: {exc}")
+                    else:
+                        st.session_state.summary_requested = False
+                        st.rerun()
+
+        if summary_status == "completed":
+            st.download_button(
+                "Download Summary TXT",
+                data=summary_download,
+                file_name=f"{job_id}_summary.txt",
+                mime="text/plain",
+                use_container_width=True,
+                key="download_summary_completed",
+            )
+
+    elif latest_result is not None and latest_result.get("status") == "failed":
+        st.session_state.is_transcribing = False
+        st.error(latest_result.get("error") or "The transcription job failed.")
+    elif latest_result is not None and latest_result.get("status") == "cancelled":
+        st.session_state.is_transcribing = False
+        st.warning(latest_result.get("error") or "The transcription was stopped.")
+    st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
+    if st.button("Transcribe a new file", use_container_width=True, key="new_file_failed"):
+        reset_transcription_state()
+        st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)

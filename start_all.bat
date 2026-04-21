@@ -23,7 +23,7 @@ if errorlevel 1 exit /b 1
 
 echo.
 echo Starting backend...
-start "On-Prem STT Backend" cmd /k ".venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log"
+start "On-Prem STT Backend" cmd /k ""%~dp0.venv\Scripts\python.exe" -m uvicorn app.main:app --app-dir "%~dp0" --host 127.0.0.1 --port 8000 --no-access-log"
 
 echo Waiting for backend to become available...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^

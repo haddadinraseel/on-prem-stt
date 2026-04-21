@@ -13,10 +13,19 @@ Production-style local speech-to-text application built with FastAPI and Streaml
 - Local audio normalization to mono 16 kHz WAV with `ffmpeg`.
 - Automatic chunking for long audio.
 - Retries failed chunks up to three times.
+- Automatic local transcript summarization after transcription completes using Ollama on the same machine.
 - Arabic-script-only final transcript output with phonetic transliteration of English words into Arabic letters.
 - Timestamped transcript output with graceful fallback to sentence-level timestamps when diarization is unavailable.
 - Download results as `.txt` and `.docx`.
 - Local logs and JSON metadata for each job.
+
+## Summary Feature
+
+After transcription finishes, the app also creates a local summary of the transcript automatically.
+
+This summary is generated on the same machine through a local Ollama model, so the transcript is not sent to an external API.
+
+The summary appears above the transcript in the app, and the downloadable output files include it too.
 
 ## Project Structure
 
@@ -119,11 +128,39 @@ Follow these steps:
 ```powershell
 ffmpeg -version
 ffprobe -version
-
+```
 
 If both commands show version information, then setup is correct.
 
 If you get a message saying either command was not found, then the FFmpeg `bin` folder was not added to `PATH` correctly yet.
+
+### Step 3: Install Ollama For Local Summaries
+
+The summary feature runs locally through Ollama.
+
+1. Install Ollama for Windows from the official site:
+   `https://ollama.com/download/windows`
+2. Open a new PowerShell window and verify the install:
+
+```powershell
+ollama --version
+```
+
+3. Download and start the local model once:
+
+```powershell
+ollama run llama3
+```
+
+4. Wait for the model to finish downloading locally.
+5. After you see the Ollama prompt, you can close that terminal window if you want.
+
+Notes:
+
+- The first run can take a while because the model is downloaded locally.
+- Ollama serves its local API on `http://localhost:11434` by default.
+- The summarizer in this app uses that local Ollama service. No transcript data is sent to a cloud summarization API.
+- The app defaults to the local Ollama model name `llama3`. If you want to try a different local model later, you can set `OLLAMA_MODEL` in a `.env` file.
 
 ### Step 3.5: Optional GPU Note
 
@@ -216,8 +253,8 @@ http://127.0.0.1:8501
 5. Select `Upload audio file`.
 6. Upload an audio file and store it locally.
 7. Click `Start Transcription`.
-8. Watch the progress updates while the backend normalizes audio, chunks it, transcribes it, merges results, and generates output files.
-9. Review the transcript and download the `.txt` and `.docx` outputs.
+8. Watch the progress updates while the backend normalizes audio, chunks it, transcribes it, generates a local summary through Ollama, and writes the output files.
+9. Review the summary and transcript, then download the `.txt` and `.docx` outputs.
 
 ## Recording Flow
 

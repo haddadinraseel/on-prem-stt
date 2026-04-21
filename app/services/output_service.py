@@ -24,7 +24,15 @@ class OutputService:
                 f"[{format_timestamp(segment.start)} - {format_timestamp(segment.end)}] {label}: {segment.text}"
             )
 
-        text_path.write_text("\n".join(lines), encoding="utf-8")
+        summary_text = (job.summary or "Summary unavailable").strip()
+        transcript_text = "\n".join(lines)
+        text_output = (
+            "=== SUMMARY ===\n"
+            f"{summary_text}\n\n"
+            "=== TRANSCRIPT ===\n"
+            f"{transcript_text}"
+        )
+        text_path.write_text(text_output, encoding="utf-8")
 
         document = Document()
         document.add_heading("Transcription Result", level=1)
@@ -32,6 +40,9 @@ class OutputService:
         document.add_paragraph(f"Model: {job.model_name}")
         document.add_paragraph(f"Device: {job.device or 'unknown'}")
         document.add_paragraph(f"Diarization: {job.diarization_status}")
+        document.add_heading("Summary", level=2)
+        document.add_paragraph(summary_text)
+        document.add_heading("Transcript", level=2)
         for line in lines:
             document.add_paragraph(line)
         document.save(docx_path)

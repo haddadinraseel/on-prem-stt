@@ -100,6 +100,48 @@ def start_transcription(request: StartTranscriptionRequest) -> dict[str, str]:
     return {"job_id": job.job_id, "status": job.status}
 
 
+@router.post("/transcriptions/{job_id}/summarize")
+def start_summarization(job_id: str) -> dict[str, str]:
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if job.status != "completed":
+        raise HTTPException(status_code=400, detail="Transcription must complete before summarization can start.")
+    if not job.transcript_text:
+        raise HTTPException(status_code=400, detail="Transcript is not available for summarization.")
+    if job.summary_status == "running":
+        return {"job_id": job.job_id, "summary_status": job.summary_status}
+    if job.summary_status == "completed":
+        return {"job_id": job.job_id, "summary_status": job.summary_status}
+
+    transcription_coordinator.start_summary_job(job_id)
+    return {"job_id": job.job_id, "summary_status": "running"}
+
+
+@router.post("/transcriptions/{job_id}/cancel")
+def cancel_transcription(job_id: str) -> dict[str, str]:
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if job.status not in {"queued", "running"}:
+        raise HTTPException(status_code=400, detail="Transcription is not currently running.")
+
+    transcription_coordinator.cancel_job(job_id)
+    return {"job_id": job.job_id, "status": "cancelling"}
+
+
+@router.post("/transcriptions/{job_id}/cancel-summary")
+def cancel_summary(job_id: str) -> dict[str, str]:
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if job.summary_status != "running":
+        raise HTTPException(status_code=400, detail="Summary is not currently running.")
+
+    transcription_coordinator.cancel_summary_job(job_id)
+    return {"job_id": job.job_id, "summary_status": "cancelling"}
+
+
 @router.get("/transcriptions/{job_id}", response_model=JobStatusResponse)
 def get_job_status(job_id: str) -> JobStatusResponse:
     job = job_store.get_job(job_id)
@@ -114,6 +156,9 @@ def get_job_status(job_id: str) -> JobStatusResponse:
         error=job.error,
         progress=[vars(item) for item in job.progress],
         transcript_text=job.transcript_text,
+        summary=job.summary,
+        summary_status=job.summary_status,
+        summary_error=job.summary_error,
         segments=[segment.to_dict() for segment in job.segments],
         text_download_url=text_url,
         docx_download_url=docx_url,
