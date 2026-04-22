@@ -402,9 +402,14 @@ def render_segments(segments: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def render_summary(summary: str | None, summary_status: str) -> None:
+def render_summary(
+    summary: str | None,
+    summary_status: str,
+    summary_progress_percent: int = 0,
+    summary_progress_message: str | None = None,
+) -> None:
     if summary_status == "running":
-        summary_text = "Generating summary..."
+        summary_text = (summary_progress_message or "Generating summary...").strip()
     else:
         summary_text = (summary or "Summary unavailable").strip()
     st.markdown(
@@ -416,6 +421,8 @@ def render_summary(summary: str | None, summary_status: str) -> None:
         """,
         unsafe_allow_html=True,
     )
+    if summary_status == "running":
+        st.progress(max(0, min(summary_progress_percent, 100)) / 100.0, text=f"Summary progress: {max(0, min(summary_progress_percent, 100))}%")
 
 
 def render_hero() -> None:
@@ -610,10 +617,13 @@ def poll_until_summary_ready(job_id: str, poll_seconds: int = 2) -> dict | None:
 
         st.session_state.job_result = result
         summary_status = result.get("summary_status", "not_started")
+        summary_progress_percent = int(result.get("summary_progress_percent", 0) or 0)
+        summary_progress_message = result.get("summary_progress_message")
 
         with status_placeholder.container():
             if summary_status == "running":
-                st.info("Working... summary is running now and will appear here when it is ready.")
+                st.info(summary_progress_message or "Working... summary is running now and will appear here when it is ready.")
+                st.progress(max(0, min(summary_progress_percent, 100)) / 100.0, text=f"Summary progress: {max(0, min(summary_progress_percent, 100))}%")
             elif summary_status == "cancelled":
                 st.warning(result.get("summary_error") or "Summary stopped.")
             elif summary_status == "failed":
@@ -807,6 +817,8 @@ else:
         transcript = render_segments(latest_result.get("segments", []))
         summary_text = latest_result.get("summary")
         summary_status = latest_result.get("summary_status", "not_started")
+        summary_progress_percent = int(latest_result.get("summary_progress_percent", 0) or 0)
+        summary_progress_message = latest_result.get("summary_progress_message")
 
         st.markdown(
             '<div class="result-column-title">Transcript</div>',
@@ -865,15 +877,18 @@ else:
                 latest_result = refreshed_result
                 summary_text = latest_result.get("summary")
                 summary_status = latest_result.get("summary_status", "not_started")
+                summary_progress_percent = int(latest_result.get("summary_progress_percent", 0) or 0)
+                summary_progress_message = latest_result.get("summary_progress_message")
                 if summary_status != "running":
                     st.session_state.summary_requested = False
 
         if summary_status in {"running", "completed", "failed", "cancelled"}:
             st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
-            render_summary(summary_text, summary_status)
+            render_summary(summary_text, summary_status, summary_progress_percent, summary_progress_message)
             if summary_status == "cancelled":
                 st.warning(latest_result.get("summary_error") or "Summary stopped.")
             if summary_status == "running":
+                st.markdown('<div style="height:0.5rem;"></div>', unsafe_allow_html=True)
                 if st.button("Stop summarizing", use_container_width=True, key="stop_summarizing"):
                     try:
                         cancel_summary(job_id)

@@ -4,11 +4,19 @@ __pycache__/
 *.pyo
 *.pyd
 
-logs/
-models/
-outputs/
-recordings/
-temp/
+logs/*
+models/*
+outputs/*
+recordings/*
+temp/*
+!logs/.gitkeep
+!models/.gitkeep
+!outputs/.gitkeep
+!recordings/.gitkeep
+!temp/.gitkeep
+!temp/uploads/
+temp/uploads/*
+!temp/uploads/.gitkeep
 
 *.zip
 *.log

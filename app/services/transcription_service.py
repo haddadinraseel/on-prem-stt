@@ -107,6 +107,8 @@ class TranscriptionCoordinator:
         job.summary_status = "running"
         job.summary_error = None
         job.summary_cancel_requested = False
+        job.summary_progress_percent = 1
+        job.summary_progress_message = "Preparing transcript for summarization."
         job.add_progress("summarization_requested", "Summary requested. Preparing local summarizer.", 88)
         job_store.update_job(job)
 
@@ -129,6 +131,7 @@ class TranscriptionCoordinator:
             return None
 
         job.summary_cancel_requested = True
+        job.summary_progress_message = "Stopping summary after the current request finishes."
         job.add_progress("summary_cancelling", "Stopping summary after the current request finishes.", 100)
         job_store.update_job(job)
         return job
@@ -340,6 +343,8 @@ class TranscriptionCoordinator:
             job.summary = None
             job.summary_status = "cancelled"
             job.summary_error = "Summary stopped by user."
+            job.summary_progress_percent = 100
+            job.summary_progress_message = "Summary stopped."
             job.add_progress("summarization_cancelled", "Summary stopped.", 100)
             job_store.update_job(job)
         except Exception as exc:
@@ -347,6 +352,8 @@ class TranscriptionCoordinator:
             job.summary = "Summary unavailable"
             job.summary_status = "failed"
             job.summary_error = str(exc)
+            job.summary_progress_percent = 100
+            job.summary_progress_message = "Summary failed."
             job.add_progress("summarization_failed", f"Summary failed: {exc}", 100)
             job_store.update_job(job)
 
@@ -354,6 +361,8 @@ class TranscriptionCoordinator:
         job.summary_status = "running"
         job.summary_error = None
         job.summary_cancel_requested = False
+        job.summary_progress_percent = 1
+        job.summary_progress_message = "Preparing transcript for summarization."
         job.add_progress("summarization", "Generating local summary with Ollama.", progress_percent)
         job_store.update_job(job)
         logger.info("Job %s generating local transcript summary with Ollama.", job.job_id)
@@ -363,12 +372,19 @@ class TranscriptionCoordinator:
         summary = llm_summarizer.summarize_with_llm(
             job.transcript_text or "",
             language=primary_language,
+            progress_callback=lambda percent, message: self._update_summary_progress(job, percent, message),
         )
         self._raise_if_summary_cancelled(job)
 
         job.summary = summary
         job.summary_status = "completed" if summary and summary != "Summary unavailable" else "failed"
         job.summary_error = None if job.summary_status == "completed" else "Summary unavailable"
+        job.summary_progress_percent = 100
+        job.summary_progress_message = (
+            "Summary completed successfully."
+            if job.summary_status == "completed"
+            else "Summary unavailable."
+        )
         logger.info(
             "Job %s summary generation completed (%s characters, status=%s).",
             job.job_id,
@@ -627,6 +643,11 @@ class TranscriptionCoordinator:
     def _raise_if_summary_cancelled(self, job: JobRecord) -> None:
         if job.summary_cancel_requested:
             raise JobCancelledError("Summary stopped by user.")
+
+    def _update_summary_progress(self, job: JobRecord, percent: int, message: str) -> None:
+        job.summary_progress_percent = max(0, min(int(percent), 100))
+        job.summary_progress_message = message
+        job_store.update_job(job)
 
     def _build_transcript_segments(
         self,

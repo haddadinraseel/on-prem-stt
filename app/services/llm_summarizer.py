@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from threading import Lock
+from typing import Callable
 
 import requests
 
@@ -15,10 +16,15 @@ class LLMSummarizer:
     def __init__(self) -> None:
         self._session = requests.Session()
         self._session_lock = Lock()
-        self._chunk_char_limit = 2200
-        self._final_combine_char_limit = 3200
+        self._chunk_char_limit = 6500
+        self._final_combine_char_limit = 9000
 
-    def summarize_with_llm(self, text: str, language: str | None = None) -> str:
+    def summarize_with_llm(
+        self,
+        text: str,
+        language: str | None = None,
+        progress_callback: Callable[[int, str], None] | None = None,
+    ) -> str:
         cleaned_text = self._clean_transcript_text(text)
         if not cleaned_text:
             return "Summary unavailable"
@@ -29,8 +35,17 @@ class LLMSummarizer:
             return "Summary unavailable"
 
         try:
+            if progress_callback:
+                progress_callback(5, "Preparing transcript for summarization.")
+
             partial_summaries: list[str] = []
-            for chunk in chunks:
+            for index, chunk in enumerate(chunks, start=1):
+                if progress_callback:
+                    chunk_percent = 10 + int((index - 1) / max(len(chunks), 1) * 65)
+                    progress_callback(
+                        chunk_percent,
+                        f"Summarizing part {index} of {len(chunks)}.",
+                    )
                 summary = self._generate_summary(
                     chunk,
                     prompt_language,
@@ -44,12 +59,16 @@ class LLMSummarizer:
                 return "Summary unavailable"
 
             if len(combined_summary) > self._final_combine_char_limit and len(partial_summaries) > 1:
+                if progress_callback:
+                    progress_callback(82, "Combining partial summaries.")
                 combined_summary = self._generate_summary(
                     combined_summary,
                     prompt_language,
                     combine_pass=True,
                 ) or combined_summary
 
+            if progress_callback:
+                progress_callback(96, "Finalizing summary.")
             return self._postprocess_summary(combined_summary)
         except requests.RequestException:
             logger.exception("Ollama summarization request failed.")
@@ -60,34 +79,41 @@ class LLMSummarizer:
 
     def _generate_summary(self, text: str, prompt_language: str, combine_pass: bool = False) -> str:
         system_prompt, user_prompt = self._build_prompt(prompt_language, combine_pass)
-        payload = {
-            "model": settings.ollama_model,
-            "system": system_prompt,
-            "prompt": f"{user_prompt}\n\nTranscript:\n{text}\n\nStructured Summary:",
-            "stream": False,
-            "options": {
-                "temperature": 0.15,
-                "top_p": 0.9,
-                "num_predict": 350 if not combine_pass else 250,
-            },
-        }
+        predict_values = [260, 360] if not combine_pass else [180, 240]
 
-        with self._session_lock:
-            response = self._session.post(
-                f"{settings.ollama_base_url.rstrip('/')}/api/generate",
-                json=payload,
-                timeout=settings.ollama_request_timeout_seconds,
-            )
+        for num_predict in predict_values:
+            payload = {
+                "model": settings.ollama_model,
+                "system": system_prompt,
+                "prompt": f"{user_prompt}\n\nTranscript:\n{text}\n\nStructured Summary:",
+                "stream": False,
+                "options": {
+                    "temperature": 0.1,
+                    "top_p": 0.9,
+                    "num_predict": num_predict,
+                },
+            }
 
-        response.raise_for_status()
-        data = response.json()
-        summary = (data.get("response") or "").strip()
-        cleaned_summary = self._strip_meta_text(summary)
-        if self._looks_invalid_summary(cleaned_summary):
-            return ""
-        if not self._has_enough_source_overlap(cleaned_summary, text):
-            return ""
-        return cleaned_summary
+            with self._session_lock:
+                response = self._session.post(
+                    f"{settings.ollama_base_url.rstrip('/')}/api/generate",
+                    json=payload,
+                    timeout=settings.ollama_request_timeout_seconds,
+                )
+
+            response.raise_for_status()
+            data = response.json()
+            summary = (data.get("response") or "").strip()
+            cleaned_summary = self._strip_meta_text(summary)
+            if self._looks_invalid_summary(cleaned_summary):
+                continue
+            if not self._has_enough_source_overlap(cleaned_summary, text):
+                continue
+            if self._looks_truncated_summary(cleaned_summary) and num_predict != predict_values[-1]:
+                continue
+            return cleaned_summary
+
+        return ""
 
     def _build_prompt(self, prompt_language: str, combine_pass: bool) -> tuple[str, str]:
         if prompt_language == "arabic":
@@ -95,7 +121,10 @@ class LLMSummarizer:
                 "You summarize noisy Arabic speech-to-text transcripts. "
                 "The transcript may contain recognition mistakes, repeated words, broken phrasing, "
                 "dialect, and mixed Arabic-English fragments. "
+                "First identify the main topics or sections in the transcript. "
+                "Then extract the key ideas, decisions, insights, and important supporting details for each topic. "
                 "Your job is to infer the intended meaning first, then produce a useful structured summary in Arabic. "
+                "The summary must be concise but information-dense. "
                 "Do not invent facts. Do not copy long transcript fragments unless necessary. "
                 "Output only the final summary."
             )
@@ -104,7 +133,8 @@ class LLMSummarizer:
                 system_prompt = (
                     "You are combining several partial summaries created from a noisy Arabic or mixed-language transcript. "
                     "Merge them into one clear, useful, structured Arabic summary. "
-                    "Keep the important information, remove repetition, and do not invent facts. "
+                    "Remove repetition, preserve all important insights, ensure logical flow between sections, "
+                    "and do not lose key information from earlier summaries. Do not invent facts. "
                     "Output only the final summary."
                 )
 
@@ -116,20 +146,28 @@ class LLMSummarizer:
                 "ملخص عام:\n"
                 "- ...\n"
                 "الموضوعات الرئيسية:\n"
+                "[اسم الموضوع]\n"
                 "- ...\n"
                 "تفاصيل مهمة:\n"
                 "- ...\n\n"
                 "ركز على الأفكار الأساسية، الحقائق المهمة، الأسماء، التواريخ، النتائج، أو الرسائل الرئيسية عندما تكون موجودة في النص. "
+                "ضمّن الأرقام والمقارنات أو المؤشرات المهمة عندما تكون موجودة في النص. "
+                "إذا كان النص يحتوي على شرح أو تعليم، فاذكر الإطار أو الخطوات أو العملية التي يتم شرحها مع الأمثلة المهمة والتوصيات أو الاستنتاجات. "
                 "تجاهل الحشو والتكرار وعبارات التدريب. "
+                "تجنب العبارات العامة أو المبهمة، وكن محددًا فيما تم شرحه أو مناقشته. "
                 "لا تخترع معلومات غير موجودة. "
-                "اجعل الملخص واضحًا ومفيدًا، وليس قصيرًا جدًا."
+                "اجعل الملخص واضحًا ومفيدًا، وليس قصيرًا جدًا. "
+                "أعط الأولوية للأطر والخطوات، والأفكار أو القرارات الرئيسية، والأمثلة المهمة، والخلاصات العملية."
             )
 
         elif prompt_language == "english":
             system_prompt = (
                 "You summarize noisy English speech-to-text transcripts. "
                 "The transcript may contain transcription errors, repetition, broken phrasing, and mixed-language fragments. "
+                "First identify the main topics or sections in the transcript. "
+                "Then extract the key ideas, decisions, insights, and important supporting details for each topic. "
                 "Your job is to infer the intended meaning first, then produce a useful structured summary. "
+                "The summary must be concise but information-dense. "
                 "Do not invent facts. Output only the final summary."
             )
 
@@ -137,7 +175,8 @@ class LLMSummarizer:
                 system_prompt = (
                     "You are combining several partial summaries created from a noisy speech transcript. "
                     "Merge them into one clear, useful, structured summary in English. "
-                    "Keep the important information, remove repetition, and do not invent facts. "
+                    "Remove repetition, preserve all important insights, ensure logical flow between sections, "
+                    "and do not lose key information from earlier summaries. Do not invent facts. "
                     "Output only the final summary."
                 )
 
@@ -149,20 +188,28 @@ class LLMSummarizer:
                 "Overview:\n"
                 "- ...\n"
                 "Main Points:\n"
+                "[Topic Name]\n"
                 "- ...\n"
                 "Important Details:\n"
                 "- ...\n\n"
                 "Keep important facts, names, dates, decisions, and main ideas when they appear in the transcript. "
+                "Include important numbers, comparisons, or metrics when present. "
+                "If the transcript includes explanations or teaching, capture the framework, process, examples, and recommendations or conclusions. "
                 "Ignore filler and repetition. "
+                "Avoid vague or generic statements. Be specific about what was discussed. "
                 "Do not invent facts. "
-                "Make the summary useful, not overly short."
+                "Make the summary useful, not overly short. "
+                "Prioritize frameworks or processes, key decisions or insights, important examples, and actionable takeaways."
             )
 
         else:
             system_prompt = (
                 "You summarize noisy multilingual speech-to-text transcripts that may contain Arabic, English, or mixed content. "
                 "The transcript may contain recognition mistakes, repetition, broken phrasing, and mixed-language fragments. "
+                "First identify the main topics or sections in the transcript. "
+                "Then extract the key ideas, decisions, insights, and important supporting details for each topic. "
                 "First infer the intended meaning, then produce a useful structured summary in the dominant language of the transcript. "
+                "The summary must be concise but information-dense. "
                 "Do not invent facts. Output only the final summary."
             )
 
@@ -170,16 +217,20 @@ class LLMSummarizer:
                 system_prompt = (
                     "You are combining several partial summaries created from a noisy multilingual speech transcript. "
                     "Merge them into one clear, useful, structured summary in the dominant language of the transcript. "
-                    "Keep the important information, remove repetition, and do not invent facts. "
+                    "Remove repetition, preserve all important insights, ensure logical flow between sections, "
+                    "and do not lose key information from earlier summaries. Do not invent facts. "
                     "Output only the final summary."
                 )
 
             user_prompt = (
                 "Write a structured summary that is shorter than the transcript but still informative. "
                 "If multiple topics are discussed, organize them under short headers with bullet points. "
+                "Avoid vague or generic statements and be specific about what was discussed. "
+                "Include important numbers, comparisons, or metrics when present. "
                 "Keep the most important facts and main ideas. "
                 "Ignore filler and repetition. "
-                "Do not invent facts."
+                "Do not invent facts. "
+                "Prioritize frameworks or processes, key decisions or insights, important examples, and actionable takeaways."
             )
 
         return system_prompt, user_prompt
@@ -282,6 +333,36 @@ class LLMSummarizer:
             return True
 
         if not re.search(r"[\u0600-\u06FFA-Za-z0-9]", text):
+            return True
+
+        return False
+
+    def _looks_truncated_summary(self, text: str) -> bool:
+        cleaned = text.strip()
+        if not cleaned:
+            return True
+
+        if cleaned.endswith((":", "(", "[", "{", "/", "-", "*", "_")):
+            return True
+
+        trailing_words = {
+            "and",
+            "or",
+            "with",
+            "including",
+            "because",
+            "while",
+            "مثل",
+            "ومن",
+            "و",
+            "مع",
+            "بما",
+        }
+        tokens = re.findall(r"[\u0600-\u06FFA-Za-z0-9]+", cleaned.lower())
+        if tokens and tokens[-1] in trailing_words:
+            return True
+
+        if cleaned.endswith("**"):
             return True
 
         return False

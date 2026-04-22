@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     poll_interval_seconds: float = 2.0
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "llama3"
-    ollama_request_timeout_seconds: int = 180
+    ollama_request_timeout_seconds: int = 300
 
     model_config = SettingsConfigDict(
         env_file=".env",

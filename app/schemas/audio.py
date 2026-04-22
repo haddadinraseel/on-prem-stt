@@ -27,6 +27,8 @@ class JobStatusResponse(BaseModel):
     summary: str | None = None
     summary_status: str = "not_started"
     summary_error: str | None = None
+    summary_progress_percent: int = 0
+    summary_progress_message: str | None = None
     segments: list[dict] = Field(default_factory=list)
     text_download_url: str | None = None
     docx_download_url: str | None = None

@@ -159,6 +159,8 @@ def get_job_status(job_id: str) -> JobStatusResponse:
         summary=job.summary,
         summary_status=job.summary_status,
         summary_error=job.summary_error,
+        summary_progress_percent=job.summary_progress_percent,
+        summary_progress_message=job.summary_progress_message,
         segments=[segment.to_dict() for segment in job.segments],
         text_download_url=text_url,
         docx_download_url=docx_url,
