@@ -28,12 +28,20 @@ class Settings(BaseSettings):
     whisper_default_language: str = "ar"
     poll_interval_seconds: float = 2.0
     ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "llama3"
+    ollama_model: str = "qwen2.5:3b"
     ollama_request_timeout_seconds: int = 300
 
+    summarizer_mode: Literal["fast", "quality"] = "fast"
+    summarizer_language_override: Literal["auto", "ar", "en"] = "auto"
+    summarizer_primary_model: str = "qwen2.5:3b"
+    summarizer_fallback_models: str = ""
+    summarizer_chunk_chars_fast: int = 4200
+    summarizer_chunk_chars_quality: int = 5600
+    summarizer_combine_chars_fast: int = 6400
+    summarizer_combine_chars_quality: int = 9000
+    summarizer_log_raw_output: bool = True
+
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
         extra="ignore",
     )
 

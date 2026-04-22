@@ -19,7 +19,7 @@ from app.services.job_store import job_store
 from app.services.merge_service import merge_service
 from app.services.model_service import model_service
 from app.services.output_service import output_service
-from app.services.llm_summarizer import llm_summarizer
+from app.services.summarization import transcript_summarizer
 from app.services.transliteration_service import transliteration_service
 
 logger = logging.getLogger(__name__)
@@ -363,14 +363,14 @@ class TranscriptionCoordinator:
         job.summary_cancel_requested = False
         job.summary_progress_percent = 1
         job.summary_progress_message = "Preparing transcript for summarization."
-        job.add_progress("summarization", "Generating local summary with Ollama.", progress_percent)
+        job.add_progress("summarization", "Generating local summary.", progress_percent)
         job_store.update_job(job)
-        logger.info("Job %s generating local transcript summary with Ollama.", job.job_id)
+        logger.info("Job %s generating local transcript summary.", job.job_id)
         self._raise_if_summary_cancelled(job)
 
         primary_language = job.language if job.language in {"ar", "en"} else None
-        summary = llm_summarizer.summarize_with_llm(
-            job.transcript_text or "",
+        summary = transcript_summarizer.summarize(
+            text=job.transcript_text or "",
             language=primary_language,
             progress_callback=lambda percent, message: self._update_summary_progress(job, percent, message),
         )
