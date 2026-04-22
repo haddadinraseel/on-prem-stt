@@ -13,7 +13,7 @@ Production-style local speech-to-text application built with FastAPI and Streaml
 - Local audio normalization to mono 16 kHz WAV with `ffmpeg`.
 - Automatic chunking for long audio.
 - Retries failed chunks up to three times.
-- Automatic local transcript summarization after transcription completes using Ollama on the same machine.
+- Manual local transcript summarization using a modular on-prem summarization service with Ollama and Qwen.
 - Arabic-script-only final transcript output with phonetic transliteration of English words into Arabic letters.
 - Timestamped transcript output with graceful fallback to sentence-level timestamps when diarization is unavailable.
 - Download results as `.txt` and `.docx`.
@@ -21,11 +21,35 @@ Production-style local speech-to-text application built with FastAPI and Streaml
 
 ## Summary Feature
 
-After transcription finishes, the app also creates a local summary of the transcript automatically.
+After transcription finishes, the user can press `Summarize` to generate a local summary of the transcript.
 
-This summary is generated on the same machine through a local Ollama model, so the transcript is not sent to an external API.
+The summarizer is designed for noisy speech-to-text transcripts and treats Arabic and English as first-class languages. It:
 
-The summary appears above the transcript in the app, and the downloadable output files include it too.
+- detects Arabic-dominant, English-dominant, and mixed transcripts
+- builds dedicated Arabic and English prompts
+- summarizes long transcripts in chunks and then runs a combine pass
+- preserves important facts, examples, numbers, decisions, and next steps
+- avoids strict lexical-overlap rejection, so Arabic summaries are not penalized unfairly
+- can optionally fall back to another local Ollama model in code if you ever decide to extend it
+
+This summary is generated on the same machine through a local backend, so the transcript is not sent to an external API.
+
+The summary appears above the transcript in the app. Transcript downloads remain transcript-only.
+
+## Summarization Architecture
+
+The summarization service is modular and lives under `app/services/summarization/`.
+
+Main pieces:
+
+- `backends.py`: Ollama backend adapter
+- `language.py`: Arabic/English/mixed detection
+- `cleaning.py`: transcript cleanup for timestamps and noisy markers
+- `chunking.py`: transcript chunking for long inputs
+- `prompts.py`: Arabic and English prompt builders plus a combine-pass prompt
+- `postprocess.py`: cleanup of raw model output
+- `validation.py`: readability and malformed-output checks
+- `service.py`: orchestration, chunk summarization, and combine pass
 
 ## Project Structure
 
@@ -146,10 +170,10 @@ The summary feature runs locally through Ollama.
 ollama --version
 ```
 
-3. Download and start the local model once:
+3. Download and start a local summarization model once:
 
 ```powershell
-ollama run llama3
+ollama run qwen2.5:3b
 ```
 
 4. Wait for the model to finish downloading locally.
@@ -160,7 +184,8 @@ Notes:
 - The first run can take a while because the model is downloaded locally.
 - Ollama serves its local API on `http://localhost:11434` by default.
 - The summarizer in this app uses that local Ollama service. No transcript data is sent to a cloud summarization API.
-- The app defaults to the local Ollama model name `llama3`. If you want to try a different local model later, you can set `OLLAMA_MODEL` in a `.env` file.
+- The default local summarization model is `qwen2.5:3b`.
+- The app is already configured to use `qwen2.5:3b` by default.
 
 ### Step 3.5: Optional GPU Note
 
@@ -190,6 +215,43 @@ py -3.10 -m venv .venv
 python -m pip install --upgrade pip "setuptools<81.0.0" wheel
 python -m pip install --no-build-isolation -r requirements.txt
 ```
+
+## Summarizer Model
+
+The default summarizer is:
+
+1. `qwen2.5:3b`
+
+Why this model:
+
+- compact enough for local on-prem use
+- better aligned with Arabic and English than a generic chat-only setup
+- simpler to support and debug while we stabilize the summarizer
+
+The intended default path is one clear runtime:
+
+- Ollama
+- `qwen2.5:3b`
+
+## Prompt Design
+
+Arabic prompt behavior:
+
+- infer intended meaning despite STT errors and repetition
+- produce natural, useful Modern Standard Arabic unless a colloquial phrase must be preserved
+- use structured headers and bullets
+- preserve important details, names, numbers, comparisons, and decisions
+- avoid overly short summaries
+- do not invent facts
+
+English prompt behavior:
+
+- infer intended meaning despite STT errors and repetition
+- use structured headers and bullets
+- preserve important details, names, numbers, comparisons, and decisions
+- capture frameworks, methods, trade-offs, and next steps when present
+- avoid generic summaries
+- do not invent facts
 
 
 ### Step 4: Start The App
@@ -253,14 +315,16 @@ http://127.0.0.1:8501
 5. Select `Upload audio file`.
 6. Upload an audio file and store it locally.
 7. Click `Start Transcription`.
-8. Watch the progress updates while the backend normalizes audio, chunks it, transcribes it, generates a local summary through Ollama, and writes the output files.
-9. Review the summary and transcript, then download the `.txt` and `.docx` outputs.
+8. Watch the progress updates while the backend normalizes audio, chunks it, transcribes it, and writes the transcript files.
+9. Press `Summarize` when you want a local summary.
+10. Review the summary and transcript, then download the `.txt` and `.docx` outputs.
 
 ## Recording Flow
 
 1. Choose a Whisper model.
 2. Select `Record audio`.
 3. Click `Start Recording`.
+
 4. Click `Stop Recording` when finished.
 5. Store the recording locally.
 6. Start transcription.
