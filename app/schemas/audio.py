@@ -13,7 +13,6 @@ class StartTranscriptionRequest(BaseModel):
 class StoredFileResponse(BaseModel):
     file_id: str
     filename: str
-    path: str
     size_bytes: int
     source_type: str
 
@@ -32,11 +31,9 @@ class JobStatusResponse(BaseModel):
     segments: list[dict] = Field(default_factory=list)
     text_download_url: str | None = None
     docx_download_url: str | None = None
-    diarization_status: str
     device: str | None = None
 
 
 class ModelStatusResponse(BaseModel):
     name: str
     available_locally: bool
-    file_path: str | None = None

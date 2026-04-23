@@ -22,6 +22,40 @@ if errorlevel 1 exit /b 1
 if errorlevel 1 exit /b 1
 
 echo.
+where ffmpeg >nul 2>nul
+if errorlevel 1 (
+    echo WARNING: ffmpeg was not found in PATH. Transcription will not work until ffmpeg is installed.
+) else (
+    where ffprobe >nul 2>nul
+    if errorlevel 1 (
+        echo WARNING: ffprobe was not found in PATH. Audio inspection will not work until ffprobe is installed.
+    ) else (
+        echo ffmpeg and ffprobe were found.
+    )
+)
+
+where ollama >nul 2>nul
+if errorlevel 1 (
+    echo WARNING: Ollama was not found in PATH. Summarization will not work until Ollama is installed.
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+        "try {" ^
+        "  $response = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:11434/api/tags -TimeoutSec 5;" ^
+        "  if ($response.StatusCode -eq 200) {" ^
+        "    $payload = $response.Content | ConvertFrom-Json;" ^
+        "    if ($payload.models.name -contains 'qwen2.5:3b') {" ^
+        "      Write-Host 'Ollama is running and qwen2.5:3b is available locally.';" ^
+        "      exit 0" ^
+        "    }" ^
+        "    Write-Host 'WARNING: Ollama is reachable, but qwen2.5:3b is not installed yet. Run: ollama pull qwen2.5:3b';" ^
+        "    exit 0" ^
+        "  }" ^
+        "} catch {" ^
+        "  Write-Host 'WARNING: Ollama is installed but not reachable at http://127.0.0.1:11434. Start Ollama before using Summarize.';" ^
+        "}"
+)
+
+echo.
 echo Starting backend...
 start "On-Prem STT Backend" cmd /k ""%~dp0.venv\Scripts\python.exe" -m uvicorn app.main:app --app-dir "%~dp0" --host 127.0.0.1 --port 8000 --no-access-log"
 

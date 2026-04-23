@@ -53,8 +53,6 @@ class JobRecord:
     segments: list[TranscriptSegment] = field(default_factory=list)
     text_file: Path | None = None
     docx_file: Path | None = None
-    diarization_enabled: bool = False
-    diarization_status: str = "not_available"
     device: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -84,8 +82,6 @@ class JobRecord:
             "segments": [segment.to_dict() for segment in self.segments],
             "text_file": str(self.text_file) if self.text_file else None,
             "docx_file": str(self.docx_file) if self.docx_file else None,
-            "diarization_enabled": self.diarization_enabled,
-            "diarization_status": self.diarization_status,
             "device": self.device,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

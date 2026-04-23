@@ -33,7 +33,6 @@ class OutputService:
         document.add_paragraph(f"Job ID: {job.job_id}")
         document.add_paragraph(f"Model: {job.model_name}")
         document.add_paragraph(f"Device: {job.device or 'unknown'}")
-        document.add_paragraph(f"Diarization: {job.diarization_status}")
         document.add_heading("Transcript", level=2)
         for line in lines:
             document.add_paragraph(line)

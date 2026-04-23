@@ -15,7 +15,7 @@ Production-style local speech-to-text application built with FastAPI and Streaml
 - Retries failed chunks up to three times.
 - Manual local transcript summarization using a modular on-prem summarization service with Ollama and Qwen.
 - Arabic-script-only final transcript output with phonetic transliteration of English words into Arabic letters.
-- Timestamped transcript output with graceful fallback to sentence-level timestamps when diarization is unavailable.
+- Timestamped transcript output for locally generated transcript segments.
 - Download results as `.txt` and `.docx`.
 - Local logs and JSON metadata for each job.
 
@@ -336,12 +336,6 @@ http://127.0.0.1:8501
 - Arabic speech remains Arabic.
 - English speech is phonetically transliterated into Arabic letters rather than translated into Arabic meaning.
 - This is an approximate phonetic rendering. Exact pronunciation can vary by accent, recording quality, and Whisper output quality.
-
-## Notes on Diarization
-
-- This project is designed to stay reliable on fully local machines without requiring additional large diarization models.
-- The current implementation falls back to timestamped sentence segments when diarization is unavailable.
-- The API still reports diarization status so the frontend can display that the system is using timestamps-only mode.
 
 ## Troubleshooting
 

@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     logs_dir: Path | None = None
 
     max_upload_size_mb: int = 1024
-    chunk_length_seconds: int = 120
+    chunk_length_seconds: int = 180
     chunk_overlap_seconds: int = 2
     transcription_retries: int = 3
     whisper_default_language: str = "ar"

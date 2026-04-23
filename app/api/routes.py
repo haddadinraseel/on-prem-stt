@@ -35,7 +35,6 @@ def _save_incoming_file(upload: UploadFile, destination_root: Path, source_type:
     return StoredFileResponse(
         file_id=file_id,
         filename=destination.name,
-        path=str(destination),
         size_bytes=size,
         source_type=source_type,
     )
@@ -164,7 +163,6 @@ def get_job_status(job_id: str) -> JobStatusResponse:
         segments=[segment.to_dict() for segment in job.segments],
         text_download_url=text_url,
         docx_download_url=docx_url,
-        diarization_status=job.diarization_status,
         device=job.device,
     )
 
