@@ -17,6 +17,7 @@ from app.services.merge_service import merge_service
 from app.services.model_service import model_service
 from app.services.output_service import output_service
 from app.services.summarization import transcript_summarizer
+from app.services.summarization.service import SummaryCancelledError
 from app.services.transliteration_service import transliteration_service
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,7 @@ class TranscriptionCoordinator:
             return None
 
         job.summary_cancel_requested = True
+        job.summary_status = "cancelling"
         job.summary_progress_message = "Stopping summary after the current request finishes."
         job.add_progress("summary_cancelling", "Stopping summary after the current request finishes.", 100)
         job_store.update_job(job)
@@ -491,6 +493,8 @@ class TranscriptionCoordinator:
             raise JobCancelledError("Summary stopped by user.")
 
     def _update_summary_progress(self, job: JobRecord, percent: int, message: str) -> None:
+        if job.summary_cancel_requested:
+            raise SummaryCancelledError("Summary stopped by user.")
         job.summary_progress_percent = max(0, min(int(percent), 100))
         job.summary_progress_message = message
         job_store.update_job(job)

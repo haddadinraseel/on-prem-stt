@@ -463,6 +463,7 @@ def init_state() -> None:
         "last_uploaded_name": None,
         "upload_widget_version": 0,
         "summary_requested": False,
+        "summary_stop_requested": False,
         "is_transcribing": False,
     }
     for key, value in defaults.items():
@@ -478,6 +479,7 @@ def reset_transcription_state() -> None:
     st.session_state.last_uploaded_name = None
     st.session_state.upload_widget_version += 1
     st.session_state.summary_requested = False
+    st.session_state.summary_stop_requested = False
     st.session_state.is_transcribing = False
 
 
@@ -559,7 +561,7 @@ def render_summary(
     summary_progress_message: str | None = None,
     locked: bool = False,
 ) -> None:
-    if summary_status == "running":
+    if summary_status in {"running", "cancelling"}:
         summary_text = (summary_progress_message or "Generating summary...").strip()
     elif locked:
         summary_text = "The summary will appear here once transcription is complete and ready for summarization."
@@ -584,7 +586,7 @@ Finish transcription first, then this section will unlock so you can generate th
 </div>""",
         unsafe_allow_html=True,
     )
-    if summary_status == "running" and not locked:
+    if summary_status in {"running", "cancelling"} and not locked:
         st.progress(max(0, min(summary_progress_percent, 100)) / 100.0, text=f"Summary progress: {max(0, min(summary_progress_percent, 100))}%")
 
 
@@ -1046,10 +1048,12 @@ else:
                         use_container_width=True,
                     )
 
-        summarize_disabled = summary_status in {"running", "completed"}
+        summarize_disabled = summary_status in {"running", "cancelling", "completed"} or st.session_state.summary_stop_requested
         summarize_label = (
             "Summarizing..."
             if summary_status == "running"
+            else "Stopping summary..."
+            if summary_status == "cancelling" or st.session_state.summary_stop_requested
             else "Summarize again"
             if summary_status in {"failed", "cancelled"}
             else "Summarize"
@@ -1061,14 +1065,30 @@ else:
                 st.error(f"Could not start summarization: {exc}")
             else:
                 st.session_state.summary_requested = True
+                st.session_state.summary_stop_requested = False
                 st.rerun()
 
-        if summary_status in {"running", "completed", "failed", "cancelled"}:
+        if summary_status in {"completed", "failed", "cancelled", "not_started"}:
+            st.session_state.summary_stop_requested = False
+
+        effective_summary_status = (
+            "cancelling"
+            if st.session_state.summary_stop_requested and summary_status == "running"
+            else summary_status
+        )
+
+        effective_summary_message = (
+            "Stopping summary after the current request finishes."
+            if effective_summary_status == "cancelling"
+            else summary_progress_message
+        )
+
+        if effective_summary_status in {"running", "cancelling", "completed", "failed", "cancelled"}:
             st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
-            render_summary(summary_text, summary_status, summary_progress_percent, summary_progress_message)
-            if summary_status == "cancelled":
+            render_summary(summary_text, effective_summary_status, summary_progress_percent, effective_summary_message)
+            if effective_summary_status == "cancelled":
                 st.warning(latest_result.get("summary_error") or "Summary stopped.")
-            if summary_status == "running":
+            if effective_summary_status == "running":
                 st.markdown('<div style="height:0.5rem;"></div>', unsafe_allow_html=True)
                 if st.button("Stop summarizing", use_container_width=True, key="stop_summarizing"):
                     try:
@@ -1077,9 +1097,12 @@ else:
                         st.error(f"Could not stop summary: {exc}")
                     else:
                         st.session_state.summary_requested = False
+                        st.session_state.summary_stop_requested = True
                         st.rerun()
                 should_rerun = True
-            elif summary_status in {"failed", "cancelled"}:
+            elif effective_summary_status == "cancelling":
+                should_rerun = True
+            elif effective_summary_status in {"failed", "cancelled"}:
                 st.session_state.summary_requested = False
 
         if summary_status == "completed":
