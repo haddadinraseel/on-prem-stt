@@ -161,7 +161,8 @@ class TranscriptSummarizer:
         if progress_callback:
             progress_callback(96, f"Finalizing summary with {candidate.label}.")
         final_summary = postprocess_summary(combined_summary)
-        return self._apply_arabic_fallback_if_needed(final_summary, source_text, content_mode)
+        final_summary = self._apply_arabic_fallback_if_needed(final_summary, source_text, content_mode)
+        return self._append_meeting_minutes_if_needed(final_summary, source_text, output_language, content_mode)
 
     def _build_model_candidates(self) -> list[ModelCandidate]:
         if settings.summarizer_mode == "quality":
@@ -288,6 +289,176 @@ class TranscriptSummarizer:
             "cannot summarize",
         }
         return any(marker in lowered for marker in meta_markers)
+
+    def _append_meeting_minutes_if_needed(
+        self,
+        summary: str,
+        source_text: str,
+        output_language: str,
+        content_mode: str,
+    ) -> str:
+        if content_mode != "meeting":
+            return summary
+
+        minutes = self._build_meeting_minutes(source_text, output_language)
+        if not minutes:
+            return summary
+
+        header = "**محضر الاجتماع المختصر**" if output_language == "ar" else "**Meeting Minutes**"
+        if header in summary:
+            return summary
+
+        return postprocess_summary(f"{summary}\n\n{header}\n{minutes}")
+
+    def _build_meeting_minutes(self, text: str, output_language: str) -> str:
+        entries = self._extract_timestamped_entries(text)
+        if not entries:
+            return ""
+
+        windows: dict[int, list[str]] = {}
+        for minute, content in entries:
+            window_index = minute // 10
+            windows.setdefault(window_index, []).append(content)
+
+        bullets: list[str] = []
+        for window_index in sorted(windows):
+            bullet = self._summarize_meeting_window(windows[window_index], output_language)
+            if bullet:
+                bullets.append(f"- {bullet}")
+
+        return "\n".join(bullets)
+
+    def _extract_timestamped_entries(self, text: str) -> list[tuple[int, str]]:
+        entries: list[tuple[int, str]] = []
+        pattern = re.compile(r"^\[(\d{2}):(\d{2})(?::\d{2})?\]\s*(.*)$")
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            match = pattern.match(line)
+            if not match:
+                continue
+
+            minutes = int(match.group(1)) * 60 + int(match.group(2))
+            content = match.group(3).strip()
+            parsed = self._parse_speaker_line(content)
+            if parsed:
+                speaker, spoken = parsed
+                content = f"{speaker}: {spoken}"
+            entries.append((minutes, content))
+        return entries
+
+    def _summarize_meeting_window(self, contents: list[str], output_language: str) -> str:
+        relevant = self._extract_business_relevant_lines(contents)
+        if not relevant:
+            return ""
+
+        normalized_seen: set[str] = set()
+        phrases: list[str] = []
+        for line in relevant:
+            phrase = self._normalize_minutes_line(line, output_language)
+            normalized = self._normalize_compare_text(phrase)
+            if not normalized or normalized in normalized_seen:
+                continue
+            normalized_seen.add(normalized)
+            phrases.append(phrase)
+
+        if not phrases:
+            return ""
+
+        delimiter = "؛ " if output_language == "ar" else "; "
+        return delimiter.join(phrases[:2]).rstrip("؛;.") + "."
+
+    def _extract_business_relevant_lines(self, contents: list[str]) -> list[str]:
+        relevant: list[str] = []
+        for content in contents:
+            candidate = content.strip()
+            if not candidate:
+                continue
+
+            normalized = self._normalize_compare_text(candidate)
+            if not normalized or self._is_small_talk_line(normalized):
+                continue
+            if not self._looks_business_relevant(candidate, normalized):
+                continue
+
+            relevant.append(candidate)
+        return relevant
+
+    def _is_small_talk_line(self, normalized: str) -> bool:
+        small_talk_markers = (
+            "صباح الخير",
+            "صباح النور",
+            "كيف الحال",
+            "الجو",
+            "الطقس",
+            "شكرا يا جماعه",
+            "شكرا يا جماعة",
+            "شكرا جميعا",
+            "تمام شكرا",
+        )
+        return any(marker in normalized for marker in small_talk_markers)
+
+    def _looks_business_relevant(self, raw: str, normalized: str) -> bool:
+        business_markers = (
+            "مشروع",
+            "timeline",
+            "backend",
+            "frontend",
+            "api",
+            "integrations",
+            "service",
+            "downtime",
+            "retry",
+            "fallback",
+            "ui",
+            "feedback",
+            "onboarding",
+            "action item",
+            "performance",
+            "latency",
+            "endpoint",
+            "database",
+            "queries",
+            "joins",
+            "optimization",
+            "update",
+            "dashboard",
+            "التسويق",
+            "الماركتنج",
+            "demo",
+            "point of contact",
+            "موعد",
+            "نراجع",
+            "تقدم",
+            "تأخير",
+            "مشكله",
+            "مشكلة",
+            "نحدد",
+            "تحسين",
+            "جاهز",
+            "مستخدم",
+        )
+        if any(marker in normalized for marker in business_markers):
+            return True
+        if re.search(r"\d", raw):
+            return True
+        if re.search(r"[A-Za-z]{2,}", raw):
+            return True
+        return False
+
+    def _normalize_minutes_line(self, content: str, output_language: str) -> str:
+        parsed = self._parse_speaker_line(content)
+        spoken = parsed[1] if parsed else content
+        spoken = re.sub(r"\s+", " ", spoken.strip(" -")).strip()
+        if not spoken:
+            return ""
+
+        if output_language == "ar":
+            spoken = spoken.replace("خلينا نلخص:", "").replace("خلينا نلخص", "").strip()
+        else:
+            spoken = re.sub(r"^(let's summarize:?|summary:?|recap:?)\s*", "", spoken, flags=re.IGNORECASE)
+        return spoken
 
     def _extract_explicit_decisions_ar(self, text: str) -> list[str]:
         decisions: list[str] = []
@@ -533,6 +704,7 @@ class TranscriptSummarizer:
         normalized = text.lower()
         normalized = normalized.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
         normalized = normalized.replace("ى", "ي").replace("ة", "ه")
+        normalized = normalized.replace("گ", "ك").replace("چ", "ج").replace("پ", "ب").replace("ڤ", "ف")
         normalized = re.sub(r"[^\w\s]", " ", normalized)
         normalized = re.sub(r"\s+", " ", normalized).strip()
         return normalized

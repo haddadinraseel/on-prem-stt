@@ -554,6 +554,28 @@ def render_segments(segments: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def contains_arabic(text: str | None) -> bool:
+    return bool(text and re.search(r"[\u0600-\u06FF]", text))
+
+
+def normalize_summary_spacing(text: str | None) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return "Summary unavailable"
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"(?m)\n{2,}(?=(?:[-*•]\s))", "\n", cleaned)
+    cleaned = re.sub(r"(?m)(\*\*[^*\n]+\*\*|[^:\n]{1,80}:)\n{2,}(?=(?:[-*•]\s))", r"\1\n", cleaned)
+    return cleaned.strip()
+
+
+def format_summary_for_download(text: str | None) -> bytes:
+    normalized = normalize_summary_spacing(text)
+    if contains_arabic(normalized):
+        normalized = "\n".join(f"\u200f{line}" if line.strip() else "" for line in normalized.splitlines())
+    return normalized.encode("utf-8")
+
+
 def render_summary(
     summary: str | None,
     summary_status: str,
@@ -562,11 +584,14 @@ def render_summary(
     locked: bool = False,
 ) -> None:
     if summary_status in {"running", "cancelling"}:
-        summary_text = (summary_progress_message or "Generating summary...").strip()
+        summary_text = normalize_summary_spacing(summary_progress_message or "Generating summary...")
     elif locked:
         summary_text = "The summary will appear here once transcription is complete and ready for summarization."
     else:
-        summary_text = (summary or "Summary unavailable").strip()
+        summary_text = normalize_summary_spacing(summary or "Summary unavailable")
+    is_arabic = contains_arabic(summary_text)
+    summary_dir = "rtl" if is_arabic else "ltr"
+    summary_align = "right" if is_arabic else "left"
     shell_class = "summary-shell locked" if locked else "summary-shell"
     lock_overlay = """<div class="summary-lock">
 <div class="summary-lock-card">
@@ -578,7 +603,7 @@ Finish transcription first, then this section will unlock so you can generate th
 </div>""" if locked else ""
     st.markdown(
         f"""<div class="{shell_class}">
-<div class="summary-box">
+<div class="summary-box" dir="{summary_dir}" style="text-align:{summary_align};">
 <div class="summary-title">Summarization</div>
 <div class="summary-text">{html.escape(summary_text)}</div>
 </div>
@@ -1021,7 +1046,7 @@ else:
 
         txt_url = latest_result.get("text_download_url")
         docx_url = latest_result.get("docx_download_url")
-        summary_download = (summary_text or "Summary unavailable").strip().encode("utf-8")
+        summary_download = format_summary_for_download(summary_text or "Summary unavailable")
 
         if txt_url and docx_url:
             try:
