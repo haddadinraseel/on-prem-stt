@@ -35,6 +35,11 @@ class SummarizationHelpersTests(unittest.TestCase):
     def test_postprocess_summary_keeps_spacing_stable(self) -> None:
         self.assertEqual(postprocess_summary("سطر أول\n\n\nسطر ثان"), "سطر أول\n\nسطر ثان")
 
+    def test_postprocess_summary_compacts_bullets_under_headers(self) -> None:
+        source = "Main Topics:\n\n- First point\n\n- Second point\n\nKey Facts:\n\n- Fact"
+        expected = "Main Topics:\n- First point\n- Second point\n\nKey Facts:\n- Fact"
+        self.assertEqual(postprocess_summary(source), expected)
+
     def test_extract_explicit_actions_from_transcript(self) -> None:
         summarizer = TranscriptSummarizer()
         transcript = """

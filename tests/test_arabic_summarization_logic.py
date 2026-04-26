@@ -124,5 +124,28 @@ class ArabicSummarizationLogicTests(unittest.TestCase):
         self.assertIn("نمو المستخدمين النشطين بلغ 18% مقارنة بالربع السابق.", result)
 
 
+    def test_meeting_minutes_append_only_business_relevant_ten_minute_chunks(self) -> None:
+        text = """[00:00:10] أحمد: صباح الخير يا جماعة.
+[00:01:00] سارة: خلصنا 70% من الـ backend وفي تأخير بسيط في الـ API integrations.
+[00:04:20] محمد: عملنا retry logic وfallback مؤقت.
+[00:11:10] أحمد: الجو اليوم جميل كثير.
+[00:12:30] ليلى: في تعقيد في onboarding ولازم نبسط الخطوات هذا الأسبوع.
+[00:18:40] محمد: الـ latency بين 1.8 و2 ثانية ولازم ننزلها لأقل من ثانية.
+[00:24:00] أحمد: demo الأسبوع الجاي يحتاج تجهيز مشترك وأنا point of contact.
+"""
+        summary = transcript_summarizer._append_meeting_minutes_if_needed(
+            "**ملخص تنفيذي**\n- اجتماع متابعة للمشروع.",
+            text,
+            "ar",
+            "meeting",
+        )
+
+        self.assertIn("**محضر الاجتماع المختصر**", summary)
+        self.assertIn("70% من الـ backend", summary)
+        self.assertIn("onboarding", summary)
+        self.assertIn("demo الأسبوع الجاي", summary)
+        self.assertNotIn("الجو اليوم جميل", summary)
+
+
 if __name__ == "__main__":
     unittest.main()

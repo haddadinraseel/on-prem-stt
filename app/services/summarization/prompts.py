@@ -70,6 +70,11 @@ def build_chunk_prompt(
 - ...
 - ...
 
+**محضر الاجتماع المختصر**
+- في نهاية الملخص فقط، أضف نقاطًا قصيرة تلخّص كل مقطع زمني مدته عشر دقائق عندما يحتوي على نقاش أو قرارات أو متابعة عمل ذات صلة.
+- لا تذكر الطوابع الزمنية نفسها.
+- استبعد أي مقطع غير مهم للأعمال مثل المجاملات أو الأحاديث الجانبية أو الطقس.
+
 إذا لم يكن المحتوى اجتماعًا، فاستخدم فقط أقسامًا تناسبه مثل:
 - **ملخص تنفيذي**
 - **الموضوعات الرئيسية**
@@ -117,6 +122,8 @@ If the content is a meeting, you may use:
 - **Action Items / Next Steps**
 - **Blockers / Risks**
 - **Key Facts**
+- **Meeting Minutes**
+  Add short bullets at the end summarizing each ten-minute discussion block only when it contains business-relevant discussion, decisions, or follow-up work. Do not mention timestamps. Exclude small talk.
 
 If it is not a meeting, use only sections that fit the content, such as:
 - **Executive Summary**

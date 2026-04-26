@@ -15,6 +15,9 @@ def postprocess_summary(text: str) -> str:
     cleaned = text.strip()
     cleaned = re.sub(r"[ \t]+", " ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"(?m)\n{2,}(?=(?:[-*•]\s))", "\n", cleaned)
+    cleaned = re.sub(r"(?m)(\*\*[^*\n]+\*\*|[^:\n]{1,80}:)\n{2,}(?=(?:[-*•]\s))", r"\1\n", cleaned)
+    cleaned = re.sub(r"(?m)(?:\n[ \t]*){2,}(?=(?:\*\*[^*\n]+\*\*|[^:\n]{1,80}:)\s*$)", "\n\n", cleaned)
     cleaned = _dedupe_repeated_sections(cleaned)
     return cleaned or "Summary unavailable"
 
@@ -33,6 +36,7 @@ def _dedupe_repeated_sections(text: str) -> str:
             "المهام أو الخطوات القادمة",
             "المخاطر أو العوائق",
             "حقائق مهمة",
+            "محضر الاجتماع المختصر",
             "Executive Summary",
             "Main Topics",
             "Decisions Made",
@@ -40,6 +44,7 @@ def _dedupe_repeated_sections(text: str) -> str:
             "Action Items / Next Steps",
             "Blockers / Risks",
             "Key Facts",
+            "Meeting Minutes",
         }:
             if normalized in seen_headers:
                 continue
