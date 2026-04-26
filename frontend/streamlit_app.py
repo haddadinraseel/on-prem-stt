@@ -1048,17 +1048,21 @@ else:
                         use_container_width=True,
                     )
 
+        show_primary_summarize_button = summary_status not in {"failed", "cancelled"}
         summarize_disabled = summary_status in {"running", "cancelling", "completed"} or st.session_state.summary_stop_requested
         summarize_label = (
             "Summarizing..."
             if summary_status == "running"
             else "Stopping summary..."
             if summary_status == "cancelling" or st.session_state.summary_stop_requested
-            else "Summarize again"
-            if summary_status in {"failed", "cancelled"}
             else "Summarize"
         )
-        if st.button(summarize_label, use_container_width=True, disabled=summarize_disabled, key="summarize_completed"):
+        if show_primary_summarize_button and st.button(
+            summarize_label,
+            use_container_width=True,
+            disabled=summarize_disabled,
+            key="summarize_completed",
+        ):
             try:
                 start_summary(job_id)
             except requests.RequestException as exc:
@@ -1104,6 +1108,16 @@ else:
                 should_rerun = True
             elif effective_summary_status in {"failed", "cancelled"}:
                 st.session_state.summary_requested = False
+                st.markdown('<div style="height:0.5rem;"></div>', unsafe_allow_html=True)
+                if st.button("Summarize again", use_container_width=True, key="summarize_again_after_cancel"):
+                    try:
+                        start_summary(job_id)
+                    except requests.RequestException as exc:
+                        st.error(f"Could not restart summarization: {exc}")
+                    else:
+                        st.session_state.summary_requested = True
+                        st.session_state.summary_stop_requested = False
+                        st.rerun()
 
         if summary_status == "completed":
             st.session_state.summary_requested = False
