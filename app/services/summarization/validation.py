@@ -49,6 +49,9 @@ def looks_truncated(text: str) -> bool:
         "و",
         "مع",
         "بما",
+        "لكن",
+        "ثم",
+        "أو",
     }
     tokens = re.findall(r"[\u0600-\u06FFA-Za-z0-9]+", cleaned.lower())
     if tokens and tokens[-1] in trailing_words:
