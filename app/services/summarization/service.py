@@ -340,12 +340,10 @@ class TranscriptSummarizer:
                 continue
             parsed_line = self._parse_speaker_line(line)
             content = parsed_line[1] if parsed_line else line
-            if parsed_line and ("خلينا نلخص" in content or "لنلخص" in content):
+            if parsed_line and ("خلّينا نلخّص" in content or "خلينا نلخص" in content or "لنلخص" in content):
                 collecting = True
                 continue
             if collecting:
-                if re.match(r"^\[[0-9]{2}:[0-9]{2}", line):
-                    pass
                 parsed_line = self._parse_speaker_line(line)
                 if parsed_line:
                     _speaker, content = parsed_line
@@ -382,7 +380,7 @@ class TranscriptSummarizer:
             if any(
                 phrase in content
                 for phrase in (
-                    "حالياً في feature عم نشتغل عليها",
+                    "حاليًا في feature عم نشتغل عليها",
                     "يمكن لازم نشتغل",
                 )
             ):
@@ -447,11 +445,11 @@ class TranscriptSummarizer:
             ("نمو 18%", "نمو المستخدمين النشطين بلغ 18% مقارنة بالربع السابق."),
             ("60% من النمو", "حوالي 60% من النمو جاء من السوق السعودي."),
             ("من 42% لـ 35%", "انخفض الاحتفاظ من 42% إلى 35% بعد الأسبوع الثاني."),
-            ("22 دولار", "ارتفع cost of acquisition إلى 22 دولاراً بعد أن كان 15."),
-            ("15", "ارتفع cost of acquisition إلى 22 دولاراً بعد أن كان 15."),
-            ("تقريباً 70% جاهزة", "ميزة smart recommendations أصبحت جاهزة تقريباً بنسبة 70%."),
-            ("بدنا أسبوعين تقريباً", "تنظيف البيانات يحتاج تقريباً إلى أسبوعين."),
-            ("24 ساعة", "زمن الرد في الدعم الفني يصل أحياناً إلى 24 ساعة."),
+            ("22 دولار", "ارتفع cost of acquisition إلى 22 دولارًا بعد أن كان 15."),
+            ("15", "ارتفع cost of acquisition إلى 22 دولارًا بعد أن كان 15."),
+            ("تقريبًا 70% جاهزة", "ميزة smart recommendations أصبحت جاهزة تقريبًا بنسبة 70%."),
+            ("بدنا أسبوعين تقريبًا", "تنظيف البيانات يحتاج تقريبًا إلى أسبوعين."),
+            ("24 ساعة", "زمن الرد في الدعم الفني يصل أحيانًا إلى 24 ساعة."),
             ("حوالي 70%", "اكتمل تنفيذ المساعد الذكي بحوالي 70%."),
             ("من 3 إلى 5 ثواني", "زمن استجابة المساعد الذكي الحالي بين 3 و5 ثوانٍ."),
             ("تقريبًا أسبوعين", "تحسين تجربة البداية يحتاج تقريبًا إلى أسبوعين."),

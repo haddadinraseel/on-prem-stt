@@ -93,7 +93,7 @@ This app will not transcribe audio unless `ffmpeg` and `ffprobe` are installed.
 
 They are not included in `requirements.txt`, because they are external Windows tools, not Python packages.
 
-fixer.py uses pydub to read and normalize the original audio files before converting them into 16kHz mono PCM WAV. Because of that FFmpeg must be available in the runtime environment, especially when the source files are not already WAV.
+The backend uses `ffmpeg` and `ffprobe` directly to normalize uploaded audio into 16kHz mono PCM WAV before transcription. Because of that, both tools must be available in the runtime environment, especially when the source files are not already WAV.
 
 Follow these steps:
 ## Install FFmpeg on Windows

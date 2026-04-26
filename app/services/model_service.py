@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 import whisper
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 class ModelService:
     def __init__(self) -> None:
         self._cache: dict[tuple[str, str], whisper.Whisper] = {}
+        self._lock = threading.RLock()
 
     def list_models(self) -> list[dict[str, str | bool | None]]:
         models: list[dict[str, str | bool | None]] = []
@@ -53,13 +55,14 @@ class ModelService:
         cache_key = (model_name, device)
         already_downloaded = self.is_model_downloaded(model_name)
 
-        if cache_key in self._cache:
-            return self._cache[cache_key], device, already_downloaded
+        with self._lock:
+            if cache_key in self._cache:
+                return self._cache[cache_key], device, already_downloaded
 
-        logger.info("Loading Whisper model '%s' on %s", model_name, device)
-        model = whisper.load_model(model_name, device=device, download_root=str(settings.models_dir))
-        self._cache[cache_key] = model
-        return model, device, already_downloaded
+            logger.info("Loading Whisper model '%s' on %s", model_name, device)
+            model = whisper.load_model(model_name, device=device, download_root=str(settings.models_dir))
+            self._cache[cache_key] = model
+            return model, device, already_downloaded
 
 
 model_service = ModelService()

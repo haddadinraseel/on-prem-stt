@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
+from typing import Literal
 
 
 class StartTranscriptionRequest(BaseModel):
     file_id: str = Field(..., description="Stored upload or recording file identifier")
     model_name: str = Field(..., description="Whisper model name")
-    source_type: str = Field(..., description="upload or recording")
-    language: str = Field(default="auto", description="Auto or specific language code")
+    source_type: Literal["upload", "recording"] = Field(..., description="upload or recording")
+    language: Literal["auto", "ar", "en"] = Field(default="auto", description="Auto or specific language code")
 
 
 class StoredFileResponse(BaseModel):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import os
+import re
 import time
 
 import requests
@@ -19,6 +20,35 @@ SOFT_BG = "rgba(248, 250, 252, 0.9)"
 ACCENT_1 = "#1D4ED8"
 ACCENT_2 = "#7C3AED"
 ACCENT_3 = "#06B6D4"
+
+STEP_DETAILS = {
+    "queued": ("Queued", "Your job has been created and is waiting to begin."),
+    "model_check": ("Preparing model", "Checking that the selected transcription model is available and ready to use."),
+    "model_download": ("Downloading model", "The selected model is being downloaded locally for first-time use on this machine."),
+    "model_loaded": ("Model ready", "The transcription model is loaded locally and ready to process your audio."),
+    "audio_normalization": ("Preparing audio", "Your audio is being cleaned up and converted into a format that works best for transcription."),
+    "audio_normalized": ("Audio prepared", "The audio has been successfully prepared for the next stage."),
+    "language_selected": ("Checking language", "The app is deciding whether Arabic, English, or automatic detection is the best fit for this recording."),
+    "chunking": ("Splitting audio", "Long audio is being divided into smaller parts so processing stays reliable and steady."),
+    "chunking_done": ("Audio sections ready", "All audio sections are prepared and ready for transcription."),
+    "gpu_acceleration": ("Using GPU", "A compatible graphics processor was found, so the app is using it to speed things up."),
+    "parallel_transcription": ("Transcribing in parallel", "Multiple audio sections are being processed at the same time to reduce waiting."),
+    "transcribing": ("Transcribing audio", "The app is listening through the next part of the recording and turning speech into text."),
+    "retrying_chunk": ("Retrying section", "One section needs another pass to improve reliability, so the app is trying it again."),
+    "chunk_completed": ("Section finished", "One more section has finished processing and the transcript is coming together."),
+    "merging": ("Combining transcript", "The app is stitching the transcribed sections into one continuous transcript."),
+    "outputs": ("Preparing files", "Downloadable transcript files are being generated for you."),
+    "completed": ("Finished", "Your transcription is complete and ready to review."),
+    "cancelling": ("Stopping", "The app received your stop request and is wrapping up the current step safely."),
+    "cancelled": ("Stopped", "The transcription was stopped before completion."),
+    "failed": ("Needs attention", "The job could not finish. You can review the message below and try again."),
+    "summarization_requested": ("Summary queued", "The app is getting the transcript summary workflow ready."),
+    "summarization": ("Building summary", "The app is reading the transcript and preparing a clear local summary."),
+    "summarization_done": ("Summary ready", "The local summary has been completed and added to the result."),
+    "summary_cancelling": ("Stopping summary", "The app received your stop request and is safely finishing the current summary step."),
+    "summarization_cancelled": ("Summary stopped", "The summary process was stopped before completion."),
+    "summarization_failed": ("Summary unavailable", "The summary could not be completed this time."),
+}
 
 st.set_page_config(
     page_title="On-Prem Speech to Text",
@@ -184,6 +214,79 @@ def inject_css() -> None:
                 margin-top: 0.9rem;
             }}
 
+            .stage-card {{
+                background: linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(248,250,252,0.96) 100%);
+                border: 1px solid rgba(29,78,216,0.12);
+                border-radius: 18px;
+                padding: 1rem 1.05rem;
+                margin-top: 0.85rem;
+                box-shadow: 0 10px 28px rgba(15,23,42,0.04);
+            }}
+
+            .stage-kicker {{
+                font-size: 0.74rem;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                color: {ACCENT_1};
+                font-weight: 700;
+                margin-bottom: 0.35rem;
+            }}
+
+            .stage-title {{
+                font-size: 1.08rem;
+                font-weight: 700;
+                color: {PRIMARY};
+                margin-bottom: 0.3rem;
+            }}
+
+            .stage-description {{
+                color: {MUTED};
+                font-size: 0.95rem;
+                line-height: 1.6;
+            }}
+
+            .timeline {{
+                display: grid;
+                gap: 0.7rem;
+                margin-top: 0.95rem;
+            }}
+
+            .timeline-item {{
+                display: grid;
+                grid-template-columns: 0.7rem 1fr;
+                gap: 0.8rem;
+                align-items: start;
+            }}
+
+            .timeline-dot {{
+                width: 0.7rem;
+                height: 0.7rem;
+                border-radius: 999px;
+                margin-top: 0.35rem;
+                background: linear-gradient(180deg, {ACCENT_1} 0%, {ACCENT_3} 100%);
+                box-shadow: 0 0 0 4px rgba(29,78,216,0.10);
+            }}
+
+            .timeline-content {{
+                background: rgba(255,255,255,0.72);
+                border: 1px solid rgba(15,23,42,0.06);
+                border-radius: 16px;
+                padding: 0.75rem 0.85rem;
+            }}
+
+            .timeline-title {{
+                color: {PRIMARY};
+                font-size: 0.92rem;
+                font-weight: 700;
+                margin-bottom: 0.2rem;
+            }}
+
+            .timeline-text {{
+                color: {MUTED};
+                font-size: 0.9rem;
+                line-height: 1.55;
+            }}
+
             .updates-title {{
                 font-size: 0.9rem;
                 font-weight: 700;
@@ -233,6 +336,53 @@ def inject_css() -> None:
                 padding: 1rem 1.05rem;
                 box-shadow: 0 10px 28px rgba(15,23,42,0.04);
                 min-height: 160px;
+            }}
+
+            .summary-shell {{
+                position: relative;
+            }}
+
+            .summary-shell.locked .summary-box {{
+                filter: blur(5px);
+                opacity: 0.72;
+                user-select: none;
+                pointer-events: none;
+            }}
+
+            .summary-lock {{
+                position: absolute;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                text-align: center;
+                padding: 1.25rem;
+                border-radius: 18px;
+                background: rgba(248, 250, 252, 0.28);
+            }}
+
+            .summary-lock-card {{
+                max-width: 460px;
+                background: rgba(255,255,255,0.92);
+                border: 1px solid rgba(15,23,42,0.08);
+                border-radius: 18px;
+                padding: 1rem 1.1rem;
+                box-shadow: 0 12px 30px rgba(15,23,42,0.08);
+            }}
+
+            .summary-lock-title {{
+                font-size: 0.95rem;
+                font-weight: 700;
+                color: {PRIMARY};
+                margin-bottom: 0.35rem;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+            }}
+
+            .summary-lock-text {{
+                color: {MUTED};
+                font-size: 0.94rem;
+                line-height: 1.6;
             }}
 
             .summary-title {{
@@ -407,21 +557,34 @@ def render_summary(
     summary_status: str,
     summary_progress_percent: int = 0,
     summary_progress_message: str | None = None,
+    locked: bool = False,
 ) -> None:
     if summary_status == "running":
         summary_text = (summary_progress_message or "Generating summary...").strip()
+    elif locked:
+        summary_text = "The summary will appear here once transcription is complete and ready for summarization."
     else:
         summary_text = (summary or "Summary unavailable").strip()
+    shell_class = "summary-shell locked" if locked else "summary-shell"
+    lock_overlay = """<div class="summary-lock">
+<div class="summary-lock-card">
+<div class="summary-lock-title">Summarization Locked</div>
+<div class="summary-lock-text">
+Finish transcription first, then this section will unlock so you can generate the local summary.
+</div>
+</div>
+</div>""" if locked else ""
     st.markdown(
-        f"""
-        <div class="summary-box">
-            <div class="summary-title">Summarization</div>
-            <div class="summary-text">{html.escape(summary_text)}</div>
-        </div>
-        """,
+        f"""<div class="{shell_class}">
+<div class="summary-box">
+<div class="summary-title">Summarization</div>
+<div class="summary-text">{html.escape(summary_text)}</div>
+</div>
+{lock_overlay}
+</div>""",
         unsafe_allow_html=True,
     )
-    if summary_status == "running":
+    if summary_status == "running" and not locked:
         st.progress(max(0, min(summary_progress_percent, 100)) / 100.0, text=f"Summary progress: {max(0, min(summary_progress_percent, 100))}%")
 
 
@@ -501,38 +664,83 @@ def begin_transcription_from_recording(model_name: str) -> None:
     st.session_state.is_transcribing = True
 
 
-def build_updates_html(progress_items: list[dict]) -> str:
-    recent_items = progress_items[-8:] if progress_items else []
-
-    if not recent_items:
-        return """
-<div class="updates-box">
-    <div class="updates-title">Live updates</div>
-    <div class="update-item">
-        <div class="update-bullet"></div>
-        <div class="update-text">Waiting for the first backend update.</div>
-    </div>
-</div>
-"""
-
-    rows = []
-    for item in reversed(recent_items):
-        msg = html.escape(str(item.get("message", "Processing...")))
-        rows.append(
-            f"""
-<div class="update-item">
-    <div class="update-bullet"></div>
-    <div class="update-text">{msg}</div>
-</div>
-"""
+def get_step_detail(progress_item: dict | None) -> tuple[str, str]:
+    if not progress_item:
+        return (
+            "Waiting to begin",
+            "The app will show each major step here so you can follow what is happening while it works.",
         )
 
-    return f"""
-<div class="updates-box">
-    <div class="updates-title">Live updates</div>
-    {''.join(rows)}
+    step_name = str(progress_item.get("step", "") or "")
+    fallback_message = str(progress_item.get("message", "Processing your request."))
+    return STEP_DETAILS.get(
+        step_name,
+        ("In progress", fallback_message),
+    )
+
+
+def extract_chunk_detail(progress_items: list[dict]) -> str | None:
+    for item in reversed(progress_items):
+        message = str(item.get("message", "") or "")
+        match = re.search(r"chunk\s+(\d+)\s+of\s+(\d+)", message, flags=re.IGNORECASE)
+        if match:
+            current = match.group(1)
+            total = match.group(2)
+            return f"Processing part {current} of {total}."
+    return None
+
+
+def render_stage_detail(progress_items: list[dict]) -> None:
+    current = progress_items[-1] if progress_items else None
+    title, description = get_step_detail(current)
+    chunk_detail = extract_chunk_detail(progress_items)
+    chunk_html = (
+        f'<div class="stage-description" style="margin-top:0.45rem;"><strong>{html.escape(chunk_detail)}</strong></div>'
+        if chunk_detail
+        else ""
+    )
+    st.markdown(
+        f"""
+        <div class="stage-card">
+            <div class="stage-kicker">Current stage</div>
+            <div class="stage-title">{html.escape(title)}</div>
+            <div class="stage-description">{html.escape(description)}</div>
+            {chunk_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_timeline(progress_items: list[dict]) -> None:
+    if not progress_items:
+        return
+
+    recent_items = progress_items[-6:]
+    rows: list[str] = []
+    rendered_steps: set[str] = set()
+    for item in reversed(recent_items):
+        step_name = str(item.get("step", "") or "")
+        if step_name in rendered_steps:
+            continue
+        rendered_steps.add(step_name)
+        title, description = get_step_detail(item)
+        rows.append(
+            f"""<div class="timeline-item">
+<div class="timeline-dot"></div>
+<div class="timeline-content">
+<div class="timeline-title">{html.escape(title)}</div>
+<div class="timeline-text">{html.escape(description)}</div>
 </div>
-"""
+</div>"""
+        )
+
+    st.markdown(
+        f"""<div class="timeline">
+{''.join(rows)}
+</div>""",
+        unsafe_allow_html=True,
+    )
 
 
 def render_progress_panel(result: dict) -> None:
@@ -568,7 +776,8 @@ def render_progress_panel(result: dict) -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown(build_updates_html(progress_items), unsafe_allow_html=True)
+    render_stage_detail(progress_items)
+    render_timeline(progress_items)
 
     st.markdown(
         f"""
@@ -580,60 +789,16 @@ def render_progress_panel(result: dict) -> None:
     )
 
 
-def poll_until_finished(job_id: str, poll_seconds: int = 2) -> dict | None:
-    progress_placeholder = st.empty()
+def poll_until_finished(job_id: str) -> dict | None:
+    try:
+        result = fetch_job(job_id)
+    except requests.RequestException as exc:
+        st.error(f"Failed to retrieve job status: {exc}")
+        return None
 
-    final_result = None
-    while True:
-        try:
-            result = fetch_job(job_id)
-        except requests.RequestException as exc:
-            progress_placeholder.error(f"Failed to retrieve job status: {exc}")
-            return None
-
-        st.session_state.job_result = result
-
-        with progress_placeholder.container():
-            render_progress_panel(result)
-
-        if result["status"] in {"completed", "failed", "cancelled"}:
-            final_result = result
-            break
-
-        time.sleep(poll_seconds)
-
-    return final_result
-
-
-def poll_until_summary_ready(job_id: str, poll_seconds: int = 2) -> dict | None:
-    status_placeholder = st.empty()
-
-    while True:
-        try:
-            result = fetch_job(job_id)
-        except requests.RequestException as exc:
-            status_placeholder.error(f"Failed to retrieve summary status: {exc}")
-            return None
-
-        st.session_state.job_result = result
-        summary_status = result.get("summary_status", "not_started")
-        summary_progress_percent = int(result.get("summary_progress_percent", 0) or 0)
-        summary_progress_message = result.get("summary_progress_message")
-
-        with status_placeholder.container():
-            if summary_status == "running":
-                st.info(summary_progress_message or "Working... summary is running now and will appear here when it is ready.")
-                st.progress(max(0, min(summary_progress_percent, 100)) / 100.0, text=f"Summary progress: {max(0, min(summary_progress_percent, 100))}%")
-            elif summary_status == "cancelled":
-                st.warning(result.get("summary_error") or "Summary stopped.")
-            elif summary_status == "failed":
-                st.warning(result.get("summary_error") or "Summary unavailable.")
-
-        if summary_status != "running":
-            status_placeholder.empty()
-            return result
-
-        time.sleep(poll_seconds)
+    st.session_state.job_result = result
+    render_progress_panel(result)
+    return result
 
 
 inject_css()
@@ -717,13 +882,6 @@ if input_mode == "Upload audio file":
         begin_transcription_from_upload(uploaded, model_name)
     if st.session_state.is_transcribing:
         st.info("Working... transcription is running now.")
-        if st.button("Stop transcription", use_container_width=True, key="stop_transcription_upload"):
-            try:
-                cancel_transcription(st.session_state.job_id)
-            except requests.RequestException as exc:
-                st.error(f"Could not stop transcription: {exc}")
-            else:
-                st.rerun()
 else:
     st.markdown(
         """
@@ -766,13 +924,6 @@ else:
         begin_transcription_from_recording(model_name)
     if st.session_state.is_transcribing:
         st.info("Working... transcription is running now.")
-        if st.button("Stop transcription", use_container_width=True, key="stop_transcription_recording"):
-            try:
-                cancel_transcription(st.session_state.job_id)
-            except requests.RequestException as exc:
-                st.error(f"Could not stop transcription: {exc}")
-            else:
-                st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -809,8 +960,44 @@ if not job_id:
         """,
         unsafe_allow_html=True,
     )
+    st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
+    render_summary(
+        None,
+        "not_started",
+        0,
+        None,
+        locked=True,
+    )
 else:
     latest_result = poll_until_finished(job_id)
+    should_rerun = False
+
+    transcription_complete = latest_result is not None and latest_result.get("status") == "completed"
+    if not transcription_complete:
+        st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
+        if latest_result is not None and latest_result.get("status") in {"queued", "running"}:
+            if st.button("Stop transcription", use_container_width=True, key="stop_transcription_progress"):
+                try:
+                    cancel_transcription(job_id)
+                except requests.RequestException as exc:
+                    st.error(f"Could not stop transcription: {exc}")
+                else:
+                    st.rerun()
+
+        st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
+        pending_summary = latest_result.get("summary") if latest_result is not None else None
+        pending_summary_status = latest_result.get("summary_status", "not_started") if latest_result is not None else "not_started"
+        pending_summary_percent = int(latest_result.get("summary_progress_percent", 0) or 0) if latest_result is not None else 0
+        pending_summary_message = latest_result.get("summary_progress_message") if latest_result is not None else None
+        render_summary(
+            pending_summary,
+            pending_summary_status,
+            pending_summary_percent,
+            pending_summary_message,
+            locked=True,
+        )
+        if latest_result is not None and latest_result.get("status") in {"queued", "running"}:
+            should_rerun = True
 
     if latest_result is not None and latest_result.get("status") == "completed":
         st.session_state.is_transcribing = False
@@ -859,9 +1046,14 @@ else:
                         use_container_width=True,
                     )
 
-        st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
         summarize_disabled = summary_status in {"running", "completed"}
-        summarize_label = "Summarizing..." if summary_status == "running" else "Summarize"
+        summarize_label = (
+            "Summarizing..."
+            if summary_status == "running"
+            else "Summarize again"
+            if summary_status in {"failed", "cancelled"}
+            else "Summarize"
+        )
         if st.button(summarize_label, use_container_width=True, disabled=summarize_disabled, key="summarize_completed"):
             try:
                 start_summary(job_id)
@@ -870,17 +1062,6 @@ else:
             else:
                 st.session_state.summary_requested = True
                 st.rerun()
-
-        if st.session_state.summary_requested and summary_status == "running":
-            refreshed_result = poll_until_summary_ready(job_id)
-            if refreshed_result is not None:
-                latest_result = refreshed_result
-                summary_text = latest_result.get("summary")
-                summary_status = latest_result.get("summary_status", "not_started")
-                summary_progress_percent = int(latest_result.get("summary_progress_percent", 0) or 0)
-                summary_progress_message = latest_result.get("summary_progress_message")
-                if summary_status != "running":
-                    st.session_state.summary_requested = False
 
         if summary_status in {"running", "completed", "failed", "cancelled"}:
             st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
@@ -897,8 +1078,12 @@ else:
                     else:
                         st.session_state.summary_requested = False
                         st.rerun()
+                should_rerun = True
+            elif summary_status in {"failed", "cancelled"}:
+                st.session_state.summary_requested = False
 
         if summary_status == "completed":
+            st.session_state.summary_requested = False
             st.download_button(
                 "Download Summary TXT",
                 data=summary_download,
@@ -917,6 +1102,9 @@ else:
     st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
     if st.button("Transcribe a new file", use_container_width=True, key="new_file_failed"):
         reset_transcription_state()
+        st.rerun()
+    if should_rerun:
+        time.sleep(2)
         st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
