@@ -39,13 +39,24 @@ class OllamaBackend:
                 },
             }
 
-            response = self._session.post(
-                f"{settings.ollama_base_url.rstrip('/')}/api/generate",
-                json=payload,
-                timeout=settings.ollama_request_timeout_seconds,
-            )
-            response.raise_for_status()
-            data = response.json()
+            try:
+                response = self._session.post(
+                    f"{settings.ollama_base_url.rstrip('/')}/api/generate",
+                    json=payload,
+                    timeout=settings.ollama_request_timeout_seconds,
+                )
+                response.raise_for_status()
+                data = response.json()
+            except requests.RequestException as exc:
+                last_error = exc
+                logger.warning(
+                    "Ollama generation request failed for model %s with num_predict=%s: %s",
+                    model_name,
+                    num_predict,
+                    exc,
+                )
+                continue
+
             output = (data.get("response") or "").strip()
             if output:
                 return output

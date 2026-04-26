@@ -330,6 +330,40 @@ class TranscriptSummarizer:
                     break
         return actions
 
+    def _extract_explicit_actions(self, text: str) -> list[str]:
+        actions: list[str] = []
+        lines = [line.strip() for line in text.splitlines()]
+        collecting = False
+
+        for line in lines:
+            if not line:
+                continue
+
+            lowered = line.lower()
+            if any(marker in lowered for marker in ("next steps", "action items", "follow-ups", "follow ups")):
+                collecting = True
+                continue
+
+            if not collecting:
+                continue
+
+            match = re.match(r"^([A-Za-z0-9_ ()-]{1,40})\s*:\s*(.+)$", line)
+            if not match:
+                if line.startswith("---"):
+                    break
+                continue
+
+            owner = match.group(1).strip()
+            task = match.group(2).strip()
+            if not owner or not task:
+                continue
+            if task.lower().startswith("let's "):
+                continue
+
+            actions.append(f"{owner}: {task}")
+
+        return actions
+
     def _extract_recap_actions_ar(self, text: str) -> list[str]:
         items: list[str] = []
         lines = [line.strip() for line in text.splitlines()]

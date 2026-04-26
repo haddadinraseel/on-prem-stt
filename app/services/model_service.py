@@ -27,7 +27,6 @@ class ModelService:
                 {
                     "name": model_name,
                     "available_locally": available,
-                    "file_path": str(model_path) if available else None,
                 }
             )
         return models

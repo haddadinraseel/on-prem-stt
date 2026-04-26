@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import concurrent.futures
 import logging
-import os
 import threading
 import time
 import uuid
@@ -14,7 +12,6 @@ from app.core.config import settings
 from app.models.job import JobRecord, TranscriptSegment
 from app.services.audio_service import AudioProcessingError, audio_service
 from app.services.chunking_service import AudioChunk, ChunkingError, chunking_service
-from app.services.diarization_service import diarization_service
 from app.services.job_store import job_store
 from app.services.merge_service import merge_service
 from app.services.model_service import model_service
@@ -24,23 +21,9 @@ from app.services.transliteration_service import transliteration_service
 
 logger = logging.getLogger(__name__)
 
-_WORKER_MODEL_CACHE: dict[tuple[str, str], whisper.Whisper] = {}
-
 
 class JobCancelledError(RuntimeError):
     pass
-
-
-def _load_worker_model(model_name: str, device: str) -> whisper.Whisper:
-    cache_key = (model_name, device)
-    if cache_key not in _WORKER_MODEL_CACHE:
-        logger.info("Worker process loading Whisper model '%s' on %s.", model_name, device)
-        _WORKER_MODEL_CACHE[cache_key] = whisper.load_model(
-            model_name,
-            device=device,
-            download_root=str(settings.models_dir),
-        )
-    return _WORKER_MODEL_CACHE[cache_key]
 
 
 def _build_transcribe_kwargs(device: str, detected_language: str | None) -> dict[str, object]:
@@ -62,24 +45,6 @@ def _build_transcribe_kwargs(device: str, detected_language: str | None) -> dict
         transcribe_kwargs["initial_prompt"] = "This is an English audio transcription."
 
     return transcribe_kwargs
-
-
-def _transcribe_chunk_worker(
-    chunk: AudioChunk,
-    model_name: str,
-    device: str,
-    detected_language: str | None,
-) -> dict[str, object]:
-    started_at = time.perf_counter()
-    model = _load_worker_model(model_name, device)
-    result = model.transcribe(str(chunk.path), **_build_transcribe_kwargs(device, detected_language))
-    return {
-        "chunk_index": chunk.index,
-        "start_time": chunk.start_time,
-        "end_time": chunk.end_time,
-        "segments": result.get("segments", []),
-        "elapsed_seconds": time.perf_counter() - started_at,
-    }
 
 
 class TranscriptionCoordinator:
@@ -260,14 +225,11 @@ class TranscriptionCoordinator:
             job_store.update_job(job)
             logger.info("Job %s merging transcript segments.", job.job_id)
 
-            diarization_status, diarized_segments = diarization_service.diarize(all_segments)
-            job.diarization_status = diarization_status
-            job.segments, job.transcript_text = merge_service.merge_segments(diarized_segments)
+            job.segments, job.transcript_text = merge_service.merge_segments(all_segments)
             logger.info(
-                "Job %s merge completed with %s final segment(s); diarization=%s.",
+                "Job %s merge completed with %s final segment(s).",
                 job.job_id,
                 len(job.segments),
-                diarization_status,
             )
 
             job.add_progress("outputs", "Generating downloadable files.", 94)
@@ -402,22 +364,16 @@ class TranscriptionCoordinator:
         duration_seconds: float,
     ) -> list[TranscriptSegment]:
         if device == "cpu":
-            workers = self._select_transcription_workers(
-                model_name=job.model_name,
-                chunk_count=len(chunks),
-                duration_seconds=duration_seconds,
-                device=device,
-            )
             logger.info(
-                "Job %s selected %s CPU worker(s) for %s chunk(s), model '%s', duration %.2fs.",
+                "Job %s is using serial CPU transcription for stability with official Whisper.",
                 job.job_id,
-                workers,
-                len(chunks),
-                job.model_name,
-                duration_seconds,
             )
-            if workers > 1:
-                return self._transcribe_chunks_in_pool(job, chunks, detected_language, device, workers)
+            job.add_progress(
+                "serial_cpu_transcription",
+                "Using stable serial transcription on CPU.",
+                50,
+            )
+            job_store.update_job(job)
         elif device == "cuda":
             logger.info(
                 "Job %s detected a CUDA-capable GPU and will use GPU acceleration automatically.",
@@ -526,116 +482,6 @@ class TranscriptionCoordinator:
         )
         return self._build_transcript_segments(chunk_results, detected_language)
 
-    def _transcribe_chunks_in_pool(
-        self,
-        job: JobRecord,
-        chunks: list[AudioChunk],
-        detected_language: str | None,
-        device: str,
-        workers: int,
-    ) -> list[TranscriptSegment]:
-        total_chunks = len(chunks)
-        completed_chunks = 0
-        pending_chunks = list(chunks)
-        chunk_results: dict[int, dict[str, object]] = {}
-        attempts_by_chunk = {chunk.index: 0 for chunk in chunks}
-        stage_started_at = time.perf_counter()
-
-        job.add_progress(
-            "parallel_transcription",
-            f"Running chunk transcription on CPU with {workers} worker(s).",
-            50,
-        )
-        job_store.update_job(job)
-        logger.info(
-            "Job %s starting parallel CPU transcription with %s worker(s) across %s chunk(s).",
-            job.job_id,
-            workers,
-            total_chunks,
-        )
-
-        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
-            while pending_chunks:
-                self._raise_if_job_cancelled(job)
-                chunk_labels = ", ".join(str(chunk.index) for chunk in pending_chunks)
-                logger.info(
-                    "Job %s dispatching %s chunk(s) to the process pool: [%s].",
-                    job.job_id,
-                    len(pending_chunks),
-                    chunk_labels,
-                )
-                future_map = {}
-                for chunk in pending_chunks:
-                    future = executor.submit(
-                        _transcribe_chunk_worker,
-                        chunk,
-                        job.model_name,
-                        device,
-                        detected_language,
-                    )
-                    future_map[future] = chunk
-                pending_chunks = []
-
-                for future in concurrent.futures.as_completed(future_map):
-                    self._raise_if_job_cancelled(job)
-                    chunk = future_map[future]
-                    attempts_by_chunk[chunk.index] += 1
-
-                    try:
-                        chunk_results[chunk.index] = future.result()
-                        segment_count = len(chunk_results[chunk.index].get("segments", []))
-                        elapsed_seconds = float(chunk_results[chunk.index].get("elapsed_seconds", 0.0))
-                        logger.info(
-                            "Job %s completed chunk %s/%s in parallel with %s segment(s) in %.2fs.",
-                            job.job_id,
-                            chunk.index,
-                            total_chunks,
-                            segment_count,
-                            elapsed_seconds,
-                        )
-                        completed_chunks += 1
-                        self._update_chunk_progress(
-                            job,
-                            "chunk_completed",
-                            f"Completed chunk {completed_chunks} of {total_chunks}.",
-                            completed_chunks,
-                            total_chunks,
-                        )
-                    except Exception as exc:
-                        attempt = attempts_by_chunk[chunk.index]
-                        logger.exception("Chunk %s failed on attempt %s", chunk.index, attempt)
-                        if attempt >= settings.transcription_retries:
-                            raise RuntimeError(
-                                f"Chunk {chunk.index} failed after {settings.transcription_retries} attempts."
-                            ) from exc
-
-                        logger.info(
-                            "Job %s re-queueing chunk %s/%s for retry attempt %s.",
-                            job.job_id,
-                            chunk.index,
-                            total_chunks,
-                            attempt + 1,
-                        )
-                        self._update_chunk_progress(
-                            job,
-                            "retrying_chunk",
-                            f"Retrying failed chunk {chunk.index} of {total_chunks} (attempt {attempt + 1}).",
-                            completed_chunks,
-                            total_chunks,
-                        )
-                        time.sleep(min(attempt, 3))
-                        pending_chunks.append(chunk)
-
-        self._raise_if_job_cancelled(job)
-
-        ordered_results = [chunk_results[index] for index in sorted(chunk_results)]
-        logger.info(
-            "Job %s transcription stage completed in parallel in %.2fs.",
-            job.job_id,
-            time.perf_counter() - stage_started_at,
-        )
-        return self._build_transcript_segments(ordered_results, detected_language)
-
     def _raise_if_job_cancelled(self, job: JobRecord) -> None:
         if job.cancel_requested:
             raise JobCancelledError("Transcription stopped by user.")
@@ -704,42 +550,5 @@ class TranscriptionCoordinator:
         current_progress = base_progress + completion_ratio * progress_span
         job.add_progress(step_name, message, round(current_progress, 2))
         job_store.update_job(job)
-
-    def _select_transcription_workers(
-        self,
-        model_name: str,
-        chunk_count: int,
-        duration_seconds: float,
-        device: str,
-    ) -> int:
-        if device != "cpu" or chunk_count <= 1:
-            return 1
-
-        cpu_count = os.cpu_count() or 1
-        safe_cpu_cap = max(1, min(4, cpu_count - 1 if cpu_count > 2 else cpu_count))
-
-        model_worker_caps = {
-            "tiny": 4,
-            "base": 4,
-            "small": 4,
-            "medium": 3,
-            "large": 2,
-            "large-v2": 2,
-            "large-v3": 2,
-        }
-        model_cap = model_worker_caps.get(model_name, 2)
-
-        chunk_length = max(settings.chunk_length_seconds, 1)
-        if duration_seconds <= chunk_length:
-            duration_cap = 1
-        elif duration_seconds <= chunk_length * 2:
-            duration_cap = 2
-        elif duration_seconds <= chunk_length * 4:
-            duration_cap = 3
-        else:
-            duration_cap = 4
-
-        return max(1, min(chunk_count, safe_cpu_cap, model_cap, duration_cap))
-
 
 transcription_coordinator = TranscriptionCoordinator()

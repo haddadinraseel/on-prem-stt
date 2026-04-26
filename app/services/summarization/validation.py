@@ -34,8 +34,17 @@ def looks_truncated(text: str) -> bool:
     if not cleaned:
         return True
 
+    if re.search(r"(?:^|\s)(?:[-*]|\d+\.)$", cleaned):
+        return True
+
     if cleaned.endswith((":", "(", "[", "{", "/", "-", "*", "_", "+")):
         return True
+
+    last_line = next((line.strip() for line in reversed(cleaned.splitlines()) if line.strip()), "")
+    if re.match(r"^[-*]\s+\S+", last_line):
+        word_count = len(re.findall(r"[\u0600-\u06FFA-Za-z0-9]+", last_line))
+        if word_count <= 12 and not re.search(r"[.!?]\**$", last_line):
+            return True
 
     trailing_words = {
         "and",
