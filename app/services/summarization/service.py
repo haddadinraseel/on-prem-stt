@@ -16,6 +16,10 @@ from app.services.summarization.validation import is_valid_summary, looks_trunca
 logger = logging.getLogger(__name__)
 
 
+class SummaryCancelledError(RuntimeError):
+    pass
+
+
 class TranscriptSummarizer:
     def __init__(self) -> None:
         self._ollama_backend = OllamaBackend()
@@ -54,6 +58,8 @@ class TranscriptSummarizer:
                 )
                 if summary and summary != "Summary unavailable":
                     return summary
+            except SummaryCancelledError:
+                raise
             except Exception:
                 logger.exception("Summarization failed with model %s", candidate.label)
                 continue
