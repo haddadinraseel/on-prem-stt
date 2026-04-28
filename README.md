@@ -319,6 +319,11 @@ http://127.0.0.1:8501
 9. Press `Summarize` when you want a local summary.
 10. Review the summary and transcript, then download the `.txt` and `.docx` outputs.
 
+Upload rule:
+- uploads are no longer capped by file size in MB
+- the backend accepts large files as long as the audio duration is within 4 hours
+- files longer than 4 hours are rejected before transcription starts
+
 ## Recording Flow
 
 1. Choose a Whisper model.

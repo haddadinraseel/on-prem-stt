@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     temp_dir: Path | None = None
     logs_dir: Path | None = None
 
-    max_upload_size_mb: int = 1024
+    max_audio_duration_hours: int = 4
     chunk_length_seconds: int = 180
     chunk_overlap_seconds: int = 2
     transcription_retries: int = 3

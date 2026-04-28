@@ -428,6 +428,10 @@ def inject_css() -> None:
                 background: rgba(255,255,255,0.58) !important;
             }}
 
+            div[data-testid="stFileUploader"] small {{
+                display: none !important;
+            }}
+
             div.stButton > button,
             div[data-testid="stDownloadButton"] > button {{
                 border-radius: 14px !important;
