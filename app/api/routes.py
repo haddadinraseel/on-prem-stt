@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.core.constants import SUPPORTED_MODELS, is_supported_audio_file
 from app.schemas.audio import JobStatusResponse, ModelStatusResponse, StartTranscriptionRequest, StoredFileResponse
+from app.services.audio_service import AudioProcessingError, audio_service
 from app.services.job_store import job_store
 from app.services.model_service import model_service
 from app.services.transcription_service import transcription_coordinator
@@ -19,17 +20,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["speech-to-text"])
 
 
+def _validate_audio_duration_limit(file_path: Path) -> None:
+    try:
+        duration_seconds = audio_service.ffprobe_duration(file_path)
+    except AudioProcessingError as exc:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if duration_seconds > settings.max_audio_duration_hours * 3600:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Audio exceeds the maximum allowed duration of {settings.max_audio_duration_hours} hours."
+            ),
+        )
+
+
 def _save_incoming_file(upload: UploadFile, destination_root: Path, source_type: str) -> StoredFileResponse:
     sanitized = sanitize_filename(upload.filename or "audio")
     file_id = make_file_id(source_type)
     destination = destination_root / f"{file_id}_{sanitized}"
-    size = save_upload_file(upload, destination, settings.max_upload_size_mb * 1024 * 1024)
+    size = save_upload_file(upload, destination)
     if size <= 0:
         destination.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="The uploaded audio file is empty.")
     if not is_supported_audio_file(destination):
         destination.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Unsupported file type.")
+    _validate_audio_duration_limit(destination)
 
     job_store.save_file_reference(file_id, destination)
     return StoredFileResponse(
